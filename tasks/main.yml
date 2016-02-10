@@ -1,0 +1,42 @@
+- include: "deps.yml"
+- fail:
+    msg: "dupwrap_passphrase must be set"
+  when: dupwrap_passphrase|default(false) == false
+- fail:
+    msg: "dupwrap_destination must be set"
+  when: dupwrap_destination|default(false) == false
+- fail:
+    msg: "dupwrap_directories must be set"
+  when: dupwrap_directories|default(false) == false
+- name: "generate config"
+  template:
+    src: dupwrap.conf
+    dest: "{{dupwrap_config_prefix}}/dupwrap.conf"
+    owner: "{{dupwrap_user}}"
+    group: "{{dupwrap_group}}"
+    mode: 0640
+- name: install wrapper
+  copy:
+    src: dupwrap.sh
+    dest: "{{dupwrap_bin_prefix}}/dupwrap"
+    owner: "{{dupwrap_user}}"
+    group: "{{dupwrap_group}}"
+    mode: 0750
+- name: set daily cronob
+  cron:
+    cron_file: "dupwrap_backup"
+    name: "YOLO nightly backup"
+    special_time: daily
+    state: present
+    job: "{{dupwrap_bin_prefix}}/dupwrap backup"
+    user: "{{dupwrap_user}}"
+  when: dupwrap_cron
+- name: set cron backup prune
+  cron:
+    cron_file: dupwrap_prune
+    name: "yolo prune backups"
+    special_time: "weekly"
+    state: present
+    job: "{{dupwrap_bin_prefix}}/dupwrap prune"
+    user: "{{dupwrap_user}}"
+  when: dupwrap_cron

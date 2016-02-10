@@ -1,0 +1,11 @@
+dupwrap_debian_pkgs:
+- duplicity
+- s3cmd
+- ncftp
+dupwrap_debian_pips:
+- boto
+dupwrap_darwin_brews:
+- s3cmd
+- ncftp
+dupwrap_darwin_pips:
+- boto

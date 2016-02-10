@@ -1,0 +1,24 @@
+- name: "install dependency packages for linux"
+  apt:
+    pkg: "{{item}}"
+    state: latest
+  with_items: "{{dupwrap_debian_pkgs}}"
+  when: ansible_os_family == 'Debian'
+- name: "install dependency pips for linux"
+  pip:
+    name: "{{item}}"
+    state: latest
+  with_items: "{{dupwrap_debian_pips}}"
+  when: ansible_os_family == 'Debian'
+- name: "install dependency packages for mac"
+  homebrew:
+    pkg: "{{item}}"
+    state: latest
+  with_items: "{{dupwrap_darwin_brews}}"
+  when: ansible_os_family == 'Darwin'
+- name: "install dependency pips for mac"
+  pip:
+    name: "{{item}}"
+    state: latest
+  with_items: "{{dupwrap_darwin_pips}}"
+  when: ansible_os_family == 'Darwin'
