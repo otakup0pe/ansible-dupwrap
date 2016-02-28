@@ -116,7 +116,7 @@ function status() {
 }
 
 if [ -z "$DUPWRAP_CONF" ] ; then
-    if [ "$USER" == "root" ] ; then
+    if [ "$(whoami)" == "root" ] ; then
         DUPWRAP_CONF="/etc/dupwrap.conf"
     else
         DUPWRAP_CONF="${HOME}/etc/dupwrap.conf"
