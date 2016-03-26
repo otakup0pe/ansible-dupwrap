@@ -6,8 +6,9 @@ galaxy_info:
   - backup
   - cloud
   - osx
+  min_ansible_version: 1.9
   platforms:
   - name: Ubuntu
     versions:
-    - 14.04 LTS
+    - all
 dependencies: []
