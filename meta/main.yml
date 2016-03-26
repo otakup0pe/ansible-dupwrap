@@ -2,5 +2,11 @@
 galaxy_info:
   author: Jonathan Freedman
   license: MIT
-
+  galaxy_tags:
+  - backup
+  - cloud
+  - osx
+  platforms:
+  - Ubuntu
+  - 14.04 LTS
 dependencies: []
