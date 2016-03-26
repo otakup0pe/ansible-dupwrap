@@ -1,7 +1,9 @@
+[![Maintenance](https://img.shields.io/maintenance/yes/2016.svg)]()
+
 `dup`licity `wrap`per
 --------------------
 
-This Ansible role installs a simple wrapper around the [duplicity](http://duplicity.nongnu.org/) backup tool. It has two high-level modes - backing up to Amazon S3, or an encrypted Mac disk image on an external Volume. It is meant to be intalled into a prefixed location, so conceptually you could have multiple instances of `dupwrap` installed on a system. The defaults all lean towards a S3 backup as the `root` user.
+This Ansible role installs a simple wrapper around the [duplicity](http://duplicity.nongnu.org/) backup tool. It has two high-level modes - backing up to Amazon S3, or an encrypted Mac disk image on an external Volume. It is meant to be installed into a prefixed location, so conceptually you could have multiple instances of `dupwrap` installed on a system. The defaults all lean towards a S3 backup as the `root` user.
 
 ### S3 Mode
 
@@ -42,7 +44,7 @@ You must pass these instance variables if backing up to Mac/USB
 
 ### `dupwrap` script
 
-This script is the interface around `duplicity`. It is also waht gets called by `cron`, if using that. All mac/usb interactions will ask for a password.
+This script is the interface around `duplicity`. It is also what gets called by `cron`, if using that. All mac/usb interactions will ask for a password.
 
 * `init` only available on osx, will ensure the encrypted volume exists
 * `backup` will kick off a backup
@@ -52,3 +54,11 @@ This script is the interface around `duplicity`. It is also waht gets called by 
 ** `restore <file> <dest> <time>` to restore from a specified time
 * `status` basic information on the backup set
 * `prune` will remove old backups
+
+# License
+
+[MIT](https://github.com/otakup0pe/ansible-dupwrap/blob/master/LICENSE)
+
+# Author
+
+This Ansible role was created by [Jonathan Freedman](http://jonathanfreedman.bio/) because he was tired of losing things to the inexorable decay of data.
