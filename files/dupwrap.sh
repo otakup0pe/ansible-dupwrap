@@ -1,102 +1,173 @@
 #!/usr/bin/env bash
 # Duplicity Wrapper
 # Jonathan Freedman <jonafree@gmail.com>
+set -e
 
+# Some globals
+declare UNENCRYPTED_VOLUME
+declare ENCRYPTED_VOLUME
+declare OS
+declare VERBOSE
+declare FORCE
+# Some dotfiles set this :v
+if [ -z "$OS" ] ; then
+    OS="$(uname -s)"
+fi
+
+# Clean up after ourselves as neccesary
 function cleanup {
     if [ "$DESTINATION" == "mac_usb" ] && [ "$ACTION" != "init" ] ; then
         unmount_volume
     fi
 }
 
+# Just a simple logger
 function log {
     echo "${1}"
     logger "dupwrap ${1}"
 }
 
+# Just a simple debugger
+function dbg {
+    if [ ! -z "$VERBOSE" ] ; then
+        log "dbg ${1}"
+    fi
+}
+
+# Just a simple error handler
 function problems {
-    log "Problems ${1}"
+    log "Problem: ${1}"
     cleanup
     exit 1
 }
 
+# Will handle the creation of a encrypted disk image on a mac
 function mac_usb_init() {
-    if [ -e "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" ] ; then
-        problems "${ENCRYPTED_VOLUME}.dmg already exists"
-    fi
-    hdiutil create "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" \
-            -size 256m -volname "${ENCRYPTED_VOLUME}" \
-            -encryption -fs HFS+J
+    [ -e "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" ] && \
+        problems "encrypted volume image ${ENCRYPTED_VOLUME}.dmg already exists"
+    hdiutil \
+        create "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" \
+        -size "$VOLUME_SIZE" \
+        -volname "${ENCRYPTED_VOLUME}" \
+        -stdinpass \
+        -encryption -fs HFS+J <<< "$PASSPHRASE" || \
+        problems "Unable to create encrypted volume ${ENCRYPTED_VOLUME}"
 }
 
+# Will remove encrypted disk image
+function mac_usb_purge() {
+    if [ ! -e "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" ] ; then
+        dbg "encrypted volume image ${ENCRYPTED_VOLUME}.dmg already removed"
+        exit
+    fi
+    if [ -z "$FORCE" ] ; then
+        echo "Are you sure? (type yes)"
+        read -r confirm
+        [ "$confirm" == "yes" ] || problems "User unsure"
+    fi
+    rm -fP "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg"
+}
+
+# Will mount the encrypted disk image on a mac
 function mount_volume {
+    [ -e "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" ] || \
+        problems "encrypted volume image ${ENCRYPTED_VOLUME}.dmg missing"
     if [ ! -d "/Volumes/${ENCRYPTED_VOLUME}" ]; then
-        hdiutil attach "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg"  \
-            || problems "Unable to mount ${ENCRYPTED_VOLUME}"
+        hdiutil \
+            attach "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" \
+            -stdinpass <<< "$PASSPHRASE" || \
+            problems "Unable to mount encrypted volume ${ENCRYPTED_VOLUME}"
     else
-        log "${ENCRYPTED_VOLUME} already mounted"
+        dbg "encrypted volume ${ENCRYPTED_VOLUME} already mounted"
     fi
 }
 
+# Will unmount the encrypted disk image on a mac
 function unmount_volume {
     if [ -d  "/Volumes/${ENCRYPTED_VOLUME}" ] ; then
         hdiutil detach "/Volumes/${ENCRYPTED_VOLUME}" \
-            || problems "Unable to unmount ${ENCRYPTED_VOLUME}"
+            || problems "Unable to unmount encrypted voume ${ENCRYPTED_VOLUME}"
     else
-        log "$ENCRYPTED_VOLUME already unmounted"
+        dbg "encrypted volume $ENCRYPTED_VOLUME already unmounted"
     fi
     if [ -d "/Volumes/${UNENCRYPTED_VOLUME}" ] ; then
         hdiutil detach "/Volumes/${UNENCRYPTED_VOLUME}" \
-            || problems "Unable to unmount ${UNENCRYPTED_VOLUME}"
+            || problems "Unable to unmount encrypted voume ${UNENCRYPTED_VOLUME}"
     else
-        log "$UNENCRYPTED_VOLUME already unmounted"
+        dbg "$UNENCRYPTED_VOLUME already unmounted"
     fi
 }
 
+# Performs the actual backup
+# perform an incremental backup to root, include directories, exclude everything else, / as reference.
 function backup() {
-    INCLUDE=""
-    for CDIR in $SOURCE
-    do
-        TMP=" --include ${CDIR}"
-        INCLUDE=${INCLUDE}${TMP}
+    local START
+    local FINISH
+    declare -a cmd
+    # don't glob tho
+    set -f    
+    cmd=(duplicity --full-if-older-than "$FULL_IF_OLDER")
+    for CDIR in $SOURCE ; do
+        cmd=(${cmd[@]} --include "$CDIR")
     done
-    START=`date +%s`
-    # perform an incremental backup to root, include directories, exclude everything else, / as reference.
-    EXCLUDE=""
+    START=$(date +%s)
+    cmd=(${cmd[@]} --exclude '**')
     if [ "$DROP_JUNK" == "yes" ] ; then
-        EXCLUDE="${EXCLUDE} --exclude 'node_modules' --exclude '.git' --exclude '.svn' --exclude '.hg'"
+        cmd=(${cmd[@]} --exclude node_modules --exclude .git --exclude .svn --exclude .hg)
     fi
-    duplicity --full-if-older-than 30D \
-              $INCLUDE \
-              --exclude '**' $EXCLUDE \
-              / $D_DESTINATION || problems "Unable to backup"
-
+    cmd=(${cmd[@]} / ${BACKUP_TARGET})
+    if [ ! -z "$VERBOSE" ] ; then
+        cmd=(${cmd[@]} --verbosity d)
+    fi
+    dbg "executing ${cmd[*]}"
+    ${cmd[*]}
+    set +f
     if [ $? == 0 ] ; then
-        FINISH=`date +%s`
-        TIME=`expr $FINISH - $START`
+        FINISH=$(date +%s)
+        local TIME=$((FINISH - START))
         log "backup succesful after ${TIME}s"
     else
-        problems "unable to backup"
+        problems "UNABLE to backup"
     fi
 }
 
+# Display a listing of files in the backup set
 function list() {
-    duplicity list-current-files $D_DESTINATION
+    duplicity list-current-files "$BACKUP_TARGET"
 }
 
-function restore() {
+# Restores a file to a specific location
+# optionally from a specific time
+function restore_file() {
+    local FILE="$1"
+    local DEST="$2"
     if [ $# == 2 ]; then
-        duplicity restore --file-to-restore $1 $D_DESTINATION $2
+        duplicity restore --file-to-restore "$FILE" "$BACKUP_TARGET" "$DEST"
     else
-        duplicity restore --file-to-restore $1 --time $2 $D_DESTINATION $3
+        duplicity restore --file-to-restore "$FILE" --time "$2" "$BACKUP_TARGET" "$3"
     fi
 }
 
-function prune() {
-    duplicity remove-all-inc-of-but-n-full $KEEP_N_FULL --force $D_DESTINATION && \
-        duplicity remove-older-than $REMOVE_OLDER --force $D_DESTINATION || \
-            problems "Unable to prune backups"
+# Restores the whole thing optionally
+# from a specific time
+function restore() {
+    if [ $# == 1 ] ; then
+        duplicity restore --force "$BACKUP_TARGET" "$1"
+    else
+        duplicity restore --force --time "$1" "$BACKUP_TARGET" "$2"
+    fi
 }
 
+# Removes non incremental and backup sets older than a
+# configured amount of time
+function prune() {
+    duplicity remove-all-inc-of-but-n-full "$KEEP_N_FULL" --force "$BACKUP_TARGET" || \
+            problems "Unable to prune backups"
+    duplicity remove-older-than "$REMOVE_OLDER" --force "$BACKUP_TARGET" || \
+        problems "Unable to prune backups"
+}
+
+# Display usage information
 function usage() {
 echo "
   dupwrap - manage duplicity backup
@@ -107,13 +178,38 @@ echo "
   ./dupwrap.sh list
   ./dupwrap.sh status
   ./dupwarp.sh prune
-  ./dupwrap.sh restore file [time] dest
+  ./dupwrap.sh restore [dest]
+  ./dupwrap.sh restore_file src [time] dest
   "
 }
 
+# Display information on current backup set
 function status() {
-    duplicity collection-status $D_DESTINATION
+    duplicity collection-status "$BACKUP_TARGET"
 }
+
+if [ $# -lt 1 ] ; then
+    problems "invalid syntax"
+fi
+ACTION="$1"
+shift
+
+while getopts "fvc:" arg; do
+    case $arg in
+        v)
+            VERBOSE="true"
+            ;;
+        f)
+            FORCE="true"
+            ;;
+        c)
+            DUPWRAP_CONF="$OPTARG"
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
 
 if [ -z "$DUPWRAP_CONF" ] ; then
     if [ "$(whoami)" == "root" ] ; then
@@ -127,54 +223,75 @@ if [ ! -e "$DUPWRAP_CONF" ] ; then
     problems "Unable to open $DUPWRAP_CONF"
 fi
 
-. $DUPWRAP_CONF
+# Configuration is externally provisioned
+# shellcheck disable=SC1090
+. "$DUPWRAP_CONF"
 
 if [ -z "$SOURCE" ] ; then
-    problems "Missing source directories"
+    problems "Source directories not defined"
 fi
 
 if [ -z "$DESTINATION" ] ; then
-    problems "Missing destination"
+    problems "Destination not defined"
 fi
 
 if [ -z "$PASSPHRASE" ] ; then
-    problems "bad configuration"
+    problems "passphrase not defined"
 fi
 export PASSPHRASE="$PASSPHRASE"
 
+if [ -z "$KEEP_N_FULL" ] || 
+       [ -z "$REMOVE_OLDER" ] || \
+       [ -z "$FULL_IF_OLDER" ] ; then
+    problems "invalid rotation configuration"
+fi
+
 if [ "$DESTINATION" == "s3" ] ; then
-    if [ -z "$BUCKET" ] || [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] ; then
+    if [ -z "$BUCKET" ] || \
+           [ -z "$AWS_ACCESS_KEY_ID" ] || \
+           [ -z "$AWS_SECRET_ACCESS_KEY" ] ; then
         problems "bad configuration"
     fi
-    D_DESTINATION="$BUCKET"
+    BACKUP_TARGET="$BUCKET"
     export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
     export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
 elif [ "$DESTINATION" == "mac_usb" ] ; then
-    if [ -z "$UNENCRYPTED_VOLUME" ] || [ -z "$ENCRYPTED_VOLUME" ] ; then
-        problems "bad configuration"
+    if [ -z "$UNENCRYPTED_VOLUME" ] || \
+           [ -z "$ENCRYPTED_VOLUME" ] || \
+           [ -z "$VOLUME_SIZE" ] ; then
+        problems "invalid volume configuration"
     fi
     if [ -z "$OS" ] || [ "$OS" != "Darwin" ] ; then
         problems "invalid os"
     fi
-    D_DESTINATION="file:///Volumes/${ENCRYPTED_VOLUME}"
+    BACKUP_TARGET="file:///Volumes/${ENCRYPTED_VOLUME}"
+else
+    problems "Unknown destination ${DESTINATION}"
 fi
 
-if [ $# -lt 1 ] ; then
-    problems "invalid syntax"
-fi
-ACTION="$1"
-shift
 
 if [ "$OS" == "Darwin" ] ; then
+    # lol case insentive -d on macs
+    # shellcheck disable=SC2010
+    if ! (ls -1 /Volumes | grep "$UNENCRYPTED_VOLUME" &> /dev/null) ; then
+        UNENCRYPTED_VOLUME=$(tr '[:lower:]' '[:upper:]' <<< "$UNENCRYPTED_VOLUME")
+        # FAT is always uppercase, so check
+        if ! (ls -1 /Volumes | grep "$UNENCRYPTED_VOLUME" &> /dev/null) ; then
+            problems "unencrypted volume ${UNENCRYPTED_VOLUME} not found"
+        fi
+    fi    
     if [ "$ACTION" == "init" ] ; then
         mac_usb_init
+        exit
+    elif [ "$ACTION" == "purge" ] ; then
+        mac_usb_purge
         exit
     else
         mount_volume
     fi
 fi
 
-if [ "$ACTION" == "restore" ] ; then
+if [ "$ACTION" == "restore_file" ] ; then
     if [ $# -gt 2 ] ; then
         RESTORE_FILE="$2"
         RESTORE_DEST="$3"
@@ -186,23 +303,40 @@ if [ "$ACTION" == "restore" ] ; then
         shift 3
     fi
 fi
+
+if [ "$ACTION" == "restore" ] ; then
+    if [ $# = 1 ] ; then
+        RESTORE_DEST="$1"
+        shift
+    elif [ $# = 2 ] ; then
+        RESTORE_TIME="$1"
+        RESTORE_DEST="$2"
+    fi
+fi
+
 if [ "$ACTION" = "backup" ]; then
     backup
     cleanup
 elif [ "$ACTION" = "list" ]; then
     list
     cleanup
-elif [ "$ACTION" = "restore" ]; then
-    if [ $# = 3 ]; then
-        restore $RESTORE_FILE $RESTORE_TIME 
+elif [ "$ACTION" = "restore" ] ; then
+    if [ $# = 2 ] ; then
+        restore "$RESTORE_DEST" "$RESTORE_TIME"
     else
-        restore $RESTORE_FILE $RESTORE_TIME $RESTORE_DEST
+        restore "$RESTORE_DEST"
+    fi
+elif [ "$ACTION" = "restore_file" ]; then
+    if [ $# = 2 ]; then
+        restore "$RESTORE_FILE" "$RESTORE_DEST"
+    else
+        restore "$RESTORE_FILE" "$RESTORE_TIME" "$RESTORE_DEST"
     fi
     cleanup
 elif [ "$ACTION" = "status" ]; then
     status
     cleanup
-elif [ "$ACTION" == "prune" ] ; then
+elif [ "$ACTION" = "prune" ] ; then
     prune
     cleanup
 else

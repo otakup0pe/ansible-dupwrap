@@ -22,7 +22,7 @@
     owner: "{{dupwrap_user}}"
     group: "{{dupwrap_group}}"
     mode: 0750
-- name: set daily cronob
+- name: set daily cronjob
   cron:
     cron_file: "dupwrap_backup"
     name: "YOLO nightly backup"
