@@ -7,3 +7,4 @@ dupwrap_n_full: 3
 dupwrap_remove_older: 12
 dupwrap_encrypted_volume_size: 256m
 dupwrap_full_older: 30D
+dupwrap_backups: []

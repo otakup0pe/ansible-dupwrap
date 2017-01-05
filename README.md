@@ -1,9 +1,9 @@
-[![Maintenance](https://img.shields.io/maintenance/yes/2017.svg)]()
+![Maintenance](https://img.shields.io/maintenance/yes/2017.svg)
 
 `dup`licity `wrap`per
 --------------------
 
-This Ansible role installs a simple wrapper around the [duplicity](http://duplicity.nongnu.org/) backup tool. It has two high-level modes - backing up to Amazon S3, or an encrypted Mac disk image on an external Volume. It is meant to be installed into a prefixed location, so conceptually you could have multiple instances of `dupwrap` installed on a system. The defaults all lean towards a S3 backup as the `root` user.
+This Ansible role installs a simple wrapper around the [duplicity](http://duplicity.nongnu.org/) backup tool. It has two high-level modes - backing up to Amazon S3, or an encrypted Mac disk image on an external Volume. The `dupwrap` tool supports multiple backup profiles on a single host. It may be run as either the `root` user to backup servers, or as another user to backup workstations.
 
 ### S3 Mode
 
@@ -21,22 +21,17 @@ These are variables which have defaults.
 * `dupwrap_group` defaults to `root`
 * `dupwrap_config_prefix` defaults to `/etc`
 * `dupwrap_bin_prefix` defaults to `/usr/local/bin`
-* `dupwrap_cron` defaults to `false` - enable to setup a cronjob using the following settings
+* `dupwrap_cron` defaults to `false` - enable to setup a cronjob
 * `dupwrap_n_full` defaults to `3` and controls how many full backups to keep
 * `dupwrap_remove_older` defaults to `12` will remove backups older than the specified number of months
 * `dupwrap_full_older` defaults to `30D` and determines how frequently to force full backups
 
-These are instance variables and must always be passed.
+Multiple backup profiles may be defined. They are all stored in a a directory named `dupwrap` relative to the config prefix. The `dupwrap_backups` variable is used to define backup profiles. This variable contains a list of yaml objects, which may default to global settings.
 
-* `dupwrap_passphrase` specifies the password use for encryption routines
-* `dupwrap_destination` should be set to either `s3` or `mac_usb`
-* `dupwrap_directories` is a list of directories to backup
-
-You must pass these instance variables if backing up to S3.
-
-* `dupwrap_aws_access_key` is your AWS Access Key ID
-* `dupwrap_aws_secret_key` is your AWS Secret Access Key
-* `dupwrap_bucket` is the S3 URI to use
+* `passphrase` (defaulting to `dupwrap_passphrase`) specifies the password use for encryption routines
+* `aws_access_key` (defaulting to `dupwrap_aws_access_key`) is the AWS Access Key ID, needed for S3 backups
+* `aws_secret_key` (`dupwrap_aws_secret_key`) is the AWS Secret Access Key, needed for S3 backups
+* `bucket` (`dupwrap_bucket`) is the S3 URI to use, needed for S3 backups
 
 You must pass these instance variables if backing up to Mac/USB
 
@@ -48,8 +43,6 @@ You must pass these instance variables if backing up to Mac/USB
 
 This script is the interface around `duplicity`. It is also what gets called by `cron`, if using that. All mac/usb interactions will ask for a password.
 
-* `init` only available on osx, will ensure the encrypted volume exists
-* `purge` only available on osx, will remove the encrypted volume
 * `backup` will kick off a backup
 * `list` lists everything in the most recent backup
 * `restore_file` will restore a specific file to the given location
@@ -57,6 +50,13 @@ This script is the interface around `duplicity`. It is also what gets called by 
 ** `restore_file <file> <dest> <time>` to restore from a specified time
 * `status` basic information on the backup set
 * `prune` will remove old backups
+
+On macOS, there are some additional actions available.
+
+* `init` will create the encrypted disk image
+* `purge` will remove the encrypted disk image
+* `mount` will mount the encrypted disk image
+* `unmount` will unmount the encrypted disk image
 
 # License
 

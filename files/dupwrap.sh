@@ -45,12 +45,17 @@ function problems {
 function mac_usb_init() {
     [ -e "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" ] && \
         problems "encrypted volume image ${ENCRYPTED_VOLUME}.dmg already exists"
-    hdiutil \
-        create "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" \
-        -size "$VOLUME_SIZE" \
-        -volname "${ENCRYPTED_VOLUME}" \
-        -stdinpass \
-        -encryption -fs HFS+J <<< "$PASSPHRASE" || \
+    cmd="hdiutil
+           create /Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg \
+           -size $VOLUME_SIZE \
+           -volname $ENCRYPTED_VOLUME \
+           -stdinpass \
+           -encryption -fs HFS+J"
+    if [ "$VERBOSE" == "true" ] ; then
+        cmd="${cmd} -verbose"
+    fi
+    dbg "$cmd"
+    $cmd <<< "$PASSPHRASE" || \
         problems "Unable to create encrypted volume ${ENCRYPTED_VOLUME}"
 }
 
@@ -90,11 +95,15 @@ function unmount_volume {
     else
         dbg "encrypted volume $ENCRYPTED_VOLUME already unmounted"
     fi
-    if [ -d "/Volumes/${UNENCRYPTED_VOLUME}" ] ; then
-        hdiutil detach "/Volumes/${UNENCRYPTED_VOLUME}" \
-            || problems "Unable to unmount encrypted voume ${UNENCRYPTED_VOLUME}"
+    if [ "$UNMOUNT" == "true" ] ; then
+        if [ -d "/Volumes/${UNENCRYPTED_VOLUME}" ] ; then
+            hdiutil detach "/Volumes/${UNENCRYPTED_VOLUME}" \
+                || problems "Unable to unmount unencrypted voume ${UNENCRYPTED_VOLUME}"
+        else
+            dbg "Unencrypted volume $UNENCRYPTED_VOLUME already unmounted"
+        fi
     else
-        dbg "$UNENCRYPTED_VOLUME already unmounted"
+        dbg "Not unmounting unencrypted volume ${UNENCRYPTED_VOLUME}"
     fi
 }
 
@@ -169,18 +178,30 @@ function prune() {
 
 # Display usage information
 function usage() {
-echo "
+    cleanup
+    echo "
   dupwrap - manage duplicity backup
 
   USAGE:
 
-  ./dupwrap.sh backup
-  ./dupwrap.sh list
-  ./dupwrap.sh status
-  ./dupwarp.sh prune
-  ./dupwrap.sh restore [dest]
-  ./dupwrap.sh restore_file src [time] dest
+  dupwrap backup
+  dupwrap list
+  dupwrap status
+  dupwarp prune
+  dupwrap restore [dest]
+  dupwrap restore_file src [time] dest
+
   "
+    if [ "$OS" == "Darwin" ] ; then
+        echo "
+  On macOS:
+
+  dupwrap init
+  dupwrap purge
+  dupwrap mount
+  dupwrap unmount
+"
+    fi
 }
 
 # Display information on current backup set
@@ -189,13 +210,17 @@ function status() {
 }
 
 if [ $# -lt 1 ] ; then
-    problems "invalid syntax"
+    usage
 fi
 ACTION="$1"
+UNMOUNT="true"
 shift
 
-while getopts "fvc:" arg; do
+while getopts "dfvc:p:" arg; do
     case $arg in
+        d)
+            UNMOUNT="false"
+            ;;
         v)
             VERBOSE="true"
             ;;
@@ -205,18 +230,35 @@ while getopts "fvc:" arg; do
         c)
             DUPWRAP_CONF="$OPTARG"
             ;;
+        p)
+            DUPWRAP_PROFILE="$OPTARG"
+            ;;
         *)
             usage
             ;;
     esac
 done
 
-if [ -z "$DUPWRAP_CONF" ] ; then
-    if [ "$(whoami)" == "root" ] ; then
-        DUPWRAP_CONF="/etc/dupwrap.conf"
+if [ "$(whoami)" == "root" ] ; then
+    DUPWRAP_CONF_PREFIX="/etc/dupwrap"
+else
+    DUPWRAP_CONF_PREFIX="${HOME}/etc/dupwrap"
+fi
+[ -d "$DUPWRAP_CONF_PREFIX" ] || problems "dupwrap config directory missing, or not set"
+
+if [ -z "$DUPWRAP_CONF" ] && [ -z "$DUPWRAP_PROFILE" ] ; then
+    if [ "$ACTION" == "backup" ] ; then
+        echo "Executing backup for all profiles"
+        for p in "${DUPWRAP_CONF_PREFIX}/"*.conf ; do
+            dupwrap backup -c "$p" -d
+        done
+        cleanup
+        exit
     else
-        DUPWRAP_CONF="${HOME}/etc/dupwrap.conf"
+        problems "must specify profile or config"
     fi
+elif [ ! -z "$DUPWRAP_PROFILE" ] ; then
+    DUPWRAP_CONF="${DUPWRAP_CONF_PREFIX}/${DUPWRAP_PROFILE}.conf"
 fi
 
 if [ ! -e "$DUPWRAP_CONF" ] ; then
@@ -285,6 +327,12 @@ if [ "$OS" == "Darwin" ] ; then
         exit
     elif [ "$ACTION" == "purge" ] ; then
         mac_usb_purge
+        exit
+    elif [ "$ACTION" == "mount" ] ; then
+        mount_volume
+        exit
+    elif [ "$ACTION" == "unmount" ] ; then
+        unmount_volume
         exit
     else
         mount_volume

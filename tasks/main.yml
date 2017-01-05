@@ -1,20 +1,24 @@
 - include: "deps.yml"
-- fail:
-    msg: "dupwrap_passphrase must be set"
-  when: dupwrap_passphrase|default(false) == false
-- fail:
-    msg: "dupwrap_destination must be set"
-  when: dupwrap_destination|default(false) == false
-- fail:
-    msg: "dupwrap_directories must be set"
-  when: dupwrap_directories|default(false) == false
-- name: "generate config"
+- name: "remove old config"
+  file:
+    path: "{{dupwrap_config_prefix}}/dupwrap.conf"
+    state: absent
+- name: "create dupwrap config directory"
+  file:
+    path: "{{dupwrap_config_prefix}}/dupwrap"
+    state: directory
+    mode: 0770
+    owner: "{{dupwrap_user}}"
+    group: "{{dupwrap_group}}"    
+- name: "generate configs"
   template:
     src: dupwrap.conf
-    dest: "{{dupwrap_config_prefix}}/dupwrap.conf"
+    dest: "{{dupwrap_config_prefix}}/dupwrap/{{item.name}}.conf"
     owner: "{{dupwrap_user}}"
     group: "{{dupwrap_group}}"
     mode: 0640
+  with_items: "{{dupwrap_backups}}"
+  no_log: true
 - name: install wrapper
   copy:
     src: dupwrap.sh
