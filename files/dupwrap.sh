@@ -126,10 +126,16 @@ function backup() {
     fi
     cmd=(${cmd[@]} / ${BACKUP_TARGET})
     if [ ! -z "$VERBOSE" ] ; then
-        cmd=(${cmd[@]} --verbosity d)
+        cmd=(${cmd[@]} --verbosity debug)
     fi
     dbg "executing ${cmd[*]}"
-    ${cmd[*]}
+    case "$-" in
+        *i*)
+            ${cmd[*]}
+            ;;
+        *)
+            ${cmd[*]} | tee "${LOG_DIRECTORY}/dupwrap.log"
+    esac
     set +f
     if [ $? == 0 ] ; then
         FINISH=$(date +%s)
@@ -216,7 +222,18 @@ ACTION="$1"
 UNMOUNT="true"
 shift
 
-while getopts "dfvc:p:" arg; do
+if [ "$ACTION" == "restore_file" ] ; then
+    RESTORE_FILE="$2"
+    RESTORE_DEST="$3"
+    shift 2
+fi
+
+if [ "$ACTION" == "restore" ] ; then
+    RESTORE_DEST="$1"
+    shift
+fi
+
+while getopts "dfvc:p:t:" arg; do
     case $arg in
         d)
             UNMOUNT="false"
@@ -233,6 +250,9 @@ while getopts "dfvc:p:" arg; do
         p)
             DUPWRAP_PROFILE="$OPTARG"
             ;;
+        t)
+            RESTORE_TIME="$OPTARG"
+            ;;
         *)
             usage
             ;;
@@ -247,13 +267,18 @@ fi
 [ -d "$DUPWRAP_CONF_PREFIX" ] || problems "dupwrap config directory missing, or not set"
 
 if [ -z "$DUPWRAP_CONF" ] && [ -z "$DUPWRAP_PROFILE" ] ; then
-    if [ "$ACTION" == "backup" ] ; then
-        echo "Executing backup for all profiles"
+    if [ "$ACTION" == "backup" ]  ; then
+        dbg "Executing backup for all profiles"
         for p in "${DUPWRAP_CONF_PREFIX}/"*.conf ; do
-            dupwrap backup -c "$p" -d
+            VERBOSE="$VERBOSE" "$0" backup -c "$p" -d
         done
         cleanup
         exit
+    elif [ "$ACTION" == "prune" ] ; then
+        dbg "Executing prune for all profiles"
+        for p in "${DUPWRAP_CONF_PREFIX}/"*.conf ; do
+            VERBOSE="$VERBOSE" "$0" prune -c "$p"
+        done
     else
         problems "must specify profile or config"
     fi
@@ -339,28 +364,6 @@ if [ "$OS" == "Darwin" ] ; then
     fi
 fi
 
-if [ "$ACTION" == "restore_file" ] ; then
-    if [ $# -gt 2 ] ; then
-        RESTORE_FILE="$2"
-        RESTORE_DEST="$3"
-        shift 2
-    elif [ $# -gt 3 ] ; then
-        RESTORE_FILE="$2"
-        RESTORE_DEST="$4"
-        RESTORE_TIME="$3"
-        shift 3
-    fi
-fi
-
-if [ "$ACTION" == "restore" ] ; then
-    if [ $# = 1 ] ; then
-        RESTORE_DEST="$1"
-        shift
-    elif [ $# = 2 ] ; then
-        RESTORE_TIME="$1"
-        RESTORE_DEST="$2"
-    fi
-fi
 
 if [ "$ACTION" = "backup" ]; then
     backup
@@ -369,13 +372,13 @@ elif [ "$ACTION" = "list" ]; then
     list
     cleanup
 elif [ "$ACTION" = "restore" ] ; then
-    if [ $# = 2 ] ; then
-        restore "$RESTORE_DEST" "$RESTORE_TIME"
-    else
+    if [ -z "$RESTORE_TIME" ] ; then
         restore "$RESTORE_DEST"
+    else        
+        restore "$RESTORE_DEST" "$RESTORE_TIME"
     fi
 elif [ "$ACTION" = "restore_file" ]; then
-    if [ $# = 2 ]; then
+    if [ -z "$RESTORE_TIME" ] ; then    
         restore "$RESTORE_FILE" "$RESTORE_DEST"
     else
         restore "$RESTORE_FILE" "$RESTORE_TIME" "$RESTORE_DEST"

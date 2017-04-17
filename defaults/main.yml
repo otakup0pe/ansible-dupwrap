@@ -2,9 +2,11 @@ dupwrap_user: root
 dupwrap_group: root
 dupwrap_config_prefix: /etc
 dupwrap_bin_prefix: /usr/local/bin
+dupwrap_log_prefix: /var/log
 dupwrap_cron: false
 dupwrap_n_full: 3
 dupwrap_remove_older: 12
 dupwrap_encrypted_volume_size: 256m
 dupwrap_full_older: 30D
 dupwrap_backups: []
+dupwrap_cron_verbose: false

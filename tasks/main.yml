@@ -32,15 +32,24 @@
     name: "YOLO nightly backup"
     special_time: daily
     state: present
-    job: "{{dupwrap_bin_prefix}}/dupwrap backup"
+    job: "bash -c '{{dupwrap_bin_prefix}}/dupwrap backup'"
     user: "{{dupwrap_user}}"
-  when: dupwrap_cron
+  when: "dupwrap_cron and not dupwrap_cron_verbose"
+- name: set daily cronjob (verbose)
+  cron:
+    cron_file: "dupwrap_backup"
+    name: "YOLO nightly backup"
+    special_time: daily
+    state: present
+    job: "bash -c '{{dupwrap_bin_prefix}}/dupwrap backup -v {{dupwrap_log_prefix}}/dupwrap.log'"
+    user: "{{dupwrap_user}}"
+  when: "dupwrap_cron and dupwrap_cron_verbose"
 - name: set cron backup prune
   cron:
     cron_file: dupwrap_prune
     name: "yolo prune backups"
     special_time: "weekly"
     state: present
-    job: "{{dupwrap_bin_prefix}}/dupwrap prune"
+    job: "bash -c '{{dupwrap_bin_prefix}}/dupwrap prune'"
     user: "{{dupwrap_user}}"
   when: dupwrap_cron
