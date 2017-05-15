@@ -115,7 +115,10 @@ function backup() {
     declare -a cmd
     # don't glob tho
     set -f    
-    cmd=(duplicity --full-if-older-than "$FULL_IF_OLDER")
+    cmd=(duplicity --full-if-older-than "$FULL_IF_OLDER" --name "$NAME")
+    if [ ! -z "$ARCHIVE_DIR" ] ; then
+        cmd=(${cmd[@]} --archive-dir "$ARCHIVE_DIR")
+    fi
     for CDIR in $SOURCE ; do
         cmd=(${cmd[@]} --include "$CDIR")
     done
