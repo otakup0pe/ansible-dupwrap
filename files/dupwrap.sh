@@ -41,6 +41,44 @@ function problems {
     exit 1
 }
 
+# Wrap our execution of duplcitiy in order to set the
+# archive directory and also redirect output to a tee
+# when running non-interactively
+function exec_dup {
+    CMD="$1"
+    shift
+    local START
+    local FINISH
+    declare -a e_cmd
+    e_cmd=(duplicity $CMD --name "$NAME")
+    if [ ! -z "$VERBOSE" ] ; then
+        e_cmd=(${e_cmd[@]} --verbosity debug)
+    fi
+    if [ ! -z "$ARCHIVE_DIR" ] ; then
+        e_cmd=(${e_cmd[@]} --archive-dir "$ARCHIVE_DIR")
+    fi
+    e_cmd=(${e_cmd[@]} "$@")
+    dbg "executing ${e_cmd[*]}"
+    START=$(date +%s)    
+    case "$-" in
+        *i*)
+            ${e_cmd[*]}
+            RC=$?
+            ;;
+        *)
+            ${e_cmd[*]} | tee "${LOG_DIRECTORY}/dupwrap.log"
+            RC=$?
+    esac
+    set +f
+    if [ "$RC" == "0" ] ; then
+        FINISH=$(date +%s)
+        local TIME=$((FINISH - START))
+        log "${CMD} succesful after ${TIME}s"
+    else
+        problems "UNABLE to ${CMD}"
+    fi    
+}
+
 # Will handle the creation of a encrypted disk image on a mac
 function mac_usb_init() {
     [ -e "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" ] && \
@@ -110,48 +148,24 @@ function unmount_volume {
 # Performs the actual backup
 # perform an incremental backup to root, include directories, exclude everything else, / as reference.
 function backup() {
-    local START
-    local FINISH
     declare -a cmd
     # don't glob tho
     set -f    
-    cmd=(duplicity --full-if-older-than "$FULL_IF_OLDER" --name "$NAME")
-    if [ ! -z "$ARCHIVE_DIR" ] ; then
-        cmd=(${cmd[@]} --archive-dir "$ARCHIVE_DIR")
-    fi
+    cmd=(backup --full-if-older-than "$FULL_IF_OLDER")
     for CDIR in $SOURCE ; do
         cmd=(${cmd[@]} --include "$CDIR")
     done
-    START=$(date +%s)
     cmd=(${cmd[@]} --exclude '**')
     if [ "$DROP_JUNK" == "yes" ] ; then
         cmd=(${cmd[@]} --exclude node_modules --exclude .git --exclude .svn --exclude .hg)
     fi
-    cmd=(${cmd[@]} / ${BACKUP_TARGET})
-    if [ ! -z "$VERBOSE" ] ; then
-        cmd=(${cmd[@]} --verbosity debug)
-    fi
-    dbg "executing ${cmd[*]}"
-    case "$-" in
-        *i*)
-            ${cmd[*]}
-            ;;
-        *)
-            ${cmd[*]} | tee "${LOG_DIRECTORY}/dupwrap.log"
-    esac
-    set +f
-    if [ $? == 0 ] ; then
-        FINISH=$(date +%s)
-        local TIME=$((FINISH - START))
-        log "backup succesful after ${TIME}s"
-    else
-        problems "UNABLE to backup"
-    fi
+    cmd=(${cmd[@]} "/" "$BACKUP_TARGET")
+    exec_dup "${cmd[*]}"
 }
 
 # Display a listing of files in the backup set
 function list() {
-    duplicity list-current-files "$BACKUP_TARGET"
+    exec_dup list-current-files "$BACKUP_TARGET"
 }
 
 # Restores a file to a specific location
@@ -159,30 +173,36 @@ function list() {
 function restore_file() {
     local FILE="$1"
     local DEST="$2"
+    cmd=(restore)
     if [ $# == 2 ]; then
-        duplicity restore --file-to-restore "$FILE" "$BACKUP_TARGET" "$DEST"
+        cmd=(${cmd[@]} --file-to-restore "$FILE" "$BACKUP_TARGET" "$DEST")
     else
-        duplicity restore --file-to-restore "$FILE" --time "$2" "$BACKUP_TARGET" "$3"
+        cmd=(${cmd[@]} --file-to-restore "$FILE" --time "$2" "$BACKUP_TARGET" "$3")
     fi
+    exec_dup "${cmd[*]}"
 }
 
 # Restores the whole thing optionally
 # from a specific time
 function restore() {
+    cmd=(restore)
     if [ $# == 1 ] ; then
-        duplicity restore --force "$BACKUP_TARGET" "$1"
+        cmd=(${cmd[@]} --force "$BACKUP_TARGET" "$1")
     else
-        duplicity restore --force --time "$1" "$BACKUP_TARGET" "$2"
+        cmd=(${cmd[@]} --force --time "$1" "$BACKUP_TARGET" "$2")
     fi
+    exec_dup "${cmd[*]}"    
 }
 
 # Removes non incremental and backup sets older than a
 # configured amount of time
 function prune() {
-    duplicity remove-all-inc-of-but-n-full "$KEEP_N_FULL" --force "$BACKUP_TARGET" || \
-            problems "Unable to prune backups"
-    duplicity remove-older-than "$REMOVE_OLDER" --force "$BACKUP_TARGET" || \
-        problems "Unable to prune backups"
+    exec_dup remove-all-inc-of-but-n-full "$KEEP_N_FULL" --force "$BACKUP_TARGET"
+    exec_dup remove-older-than "$REMOVE_OLDER" --force "$BACKUP_TARGET"
+}
+
+function clean_backups() {
+    exec_dup cleanup --force --extra-clean "$BACKUP_TARGET"
 }
 
 # Display usage information
@@ -200,7 +220,7 @@ function usage() {
   dupwrap restore [dest]
   dupwrap restore_file src [time] dest
 
-  "
+"
     if [ "$OS" == "Darwin" ] ; then
         echo "
   On macOS:
@@ -215,7 +235,7 @@ function usage() {
 
 # Display information on current backup set
 function status() {
-    duplicity collection-status "$BACKUP_TARGET"
+    exec_dup collection-status "$BACKUP_TARGET"
 }
 
 if [ $# -lt 1 ] ; then
@@ -393,6 +413,8 @@ elif [ "$ACTION" = "status" ]; then
 elif [ "$ACTION" = "prune" ] ; then
     prune
     cleanup
+elif [ "$ACTION" = "clean" ] ; then
+    clean_backups
 else
     usage
 fi

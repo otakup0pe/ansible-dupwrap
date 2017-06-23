@@ -46,8 +46,8 @@ This script is the interface around `duplicity`. It is also what gets called by 
 * `backup` will kick off a backup
 * `list` lists everything in the most recent backup
 * `restore_file` will restore a specific file to the given location
-** `restore_file <file> <dest>` to restore most recent
-** `restore_file <file> <dest> <time>` to restore from a specified time
+  * `restore_file <file> <dest>` to restore most recent
+  * `restore_file <file> <dest> <time>` to restore from a specified time
 * `status` basic information on the backup set
 * `prune` will remove old backups
 
