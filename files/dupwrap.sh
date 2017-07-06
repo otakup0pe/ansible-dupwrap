@@ -9,6 +9,7 @@ declare ENCRYPTED_VOLUME
 declare OS
 declare VERBOSE
 declare FORCE
+
 # Some dotfiles set this :v
 if [ -z "$OS" ] ; then
     OS="$(uname -s)"
@@ -45,21 +46,25 @@ function problems {
 # archive directory and also redirect output to a tee
 # when running non-interactively
 function exec_dup {
-    CMD="$1"
-    shift
+    A_CMD=("$@")
+    CMD="${A_CMD[0]}"
     local START
     local FINISH
     declare -a e_cmd
-    e_cmd=(duplicity $CMD --name "$NAME")
+    e_cmd=(duplicity)
+    if [ "$CMD" != "backup" ] ; then
+        e_cmd=(${e_cmd[@]} $CMD)
+    fi
+    e_cmd=(${e_cmd[@]} --name "$NAME")
     if [ ! -z "$VERBOSE" ] ; then
         e_cmd=(${e_cmd[@]} --verbosity debug)
     fi
     if [ ! -z "$ARCHIVE_DIR" ] ; then
         e_cmd=(${e_cmd[@]} --archive-dir "$ARCHIVE_DIR")
     fi
-    e_cmd=(${e_cmd[@]} "$@")
+    e_cmd=(${e_cmd[@]} ${A_CMD[@]:1})
     dbg "executing ${e_cmd[*]}"
-    START=$(date +%s)    
+    START=$(date +%s)
     case "$-" in
         *i*)
             ${e_cmd[*]}
@@ -67,15 +72,15 @@ function exec_dup {
             ;;
         *)
             ${e_cmd[*]} | tee "${LOG_DIRECTORY}/dupwrap.log"
-            RC=$?
+            RC=${PIPESTATUS[0]}
+            ;;
     esac
-    set +f
+    FINISH=$(date +%s)
+    local TIME=$((FINISH - START))
     if [ "$RC" == "0" ] ; then
-        FINISH=$(date +%s)
-        local TIME=$((FINISH - START))
         log "${CMD} succesful after ${TIME}s"
     else
-        problems "UNABLE to ${CMD}"
+        problems "UNABLE to ${CMD} after ${TIME}s"
     fi    
 }
 
@@ -160,7 +165,7 @@ function backup() {
         cmd=(${cmd[@]} --exclude node_modules --exclude .git --exclude .svn --exclude .hg)
     fi
     cmd=(${cmd[@]} "/" "$BACKUP_TARGET")
-    exec_dup "${cmd[*]}"
+    exec_dup "${cmd[@]}"
 }
 
 # Display a listing of files in the backup set

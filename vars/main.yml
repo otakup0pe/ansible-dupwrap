@@ -1,3 +1,4 @@
+---
 dupwrap_debian_pkgs:
 - duplicity
 - s3cmd

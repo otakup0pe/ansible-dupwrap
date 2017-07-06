@@ -1,3 +1,4 @@
+---
 - include: "deps.yml"
 - name: "remove old config"
   file:
@@ -9,7 +10,7 @@
     state: directory
     mode: 0770
     owner: "{{dupwrap_user}}"
-    group: "{{dupwrap_group}}"    
+    group: "{{dupwrap_group}}"
 - name: "generate configs"
   template:
     src: dupwrap.conf
@@ -41,7 +42,9 @@
     name: "YOLO nightly backup"
     special_time: daily
     state: present
-    job: "bash -c '{{dupwrap_bin_prefix}}/dupwrap backup -v {{dupwrap_log_prefix}}/dupwrap.log'"
+    job: >
+      bash -c '{{dupwrap_bin_prefix}}/dupwrap backup
+      -v {{dupwrap_log_prefix}}/dupwrap.log'
     user: "{{dupwrap_user}}"
   when: "dupwrap_cron and dupwrap_cron_verbose"
 - name: set cron backup prune

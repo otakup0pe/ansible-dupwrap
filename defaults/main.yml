@@ -1,3 +1,4 @@
+---
 dupwrap_user: root
 dupwrap_group: root
 dupwrap_config_prefix: /etc

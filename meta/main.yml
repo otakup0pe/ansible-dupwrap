@@ -3,12 +3,12 @@ galaxy_info:
   author: Jonathan Freedman
   license: MIT
   galaxy_tags:
-  - backup
-  - cloud
-  - osx
+    - backup
+    - cloud
+    - osx
   min_ansible_version: 1.9
   platforms:
-  - name: Ubuntu
-    versions:
-    - all
+    - name: Ubuntu
+      versions:
+        - all
 dependencies: []
