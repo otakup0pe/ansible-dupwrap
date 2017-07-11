@@ -10,3 +10,5 @@ dupwrap_darwin_brews:
 - ncftp
 dupwrap_darwin_pips:
 - boto
+dupwrap_helpers:
+- swap

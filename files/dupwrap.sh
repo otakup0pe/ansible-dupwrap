@@ -20,6 +20,9 @@ function cleanup {
     if [ "$DESTINATION" == "mac_usb" ] && [ "$ACTION" != "init" ] ; then
         unmount_volume
     fi
+    if [ ! -z "$POST_SCRIPT" ] ; then
+        $POST_SCRIPT
+    fi    
 }
 
 # Just a simple logger
@@ -317,6 +320,7 @@ fi
 if [ ! -e "$DUPWRAP_CONF" ] ; then
     problems "Unable to open $DUPWRAP_CONF"
 fi
+export DUPWRAP_CONF
 
 # Configuration is externally provisioned
 # shellcheck disable=SC1090
@@ -394,6 +398,9 @@ fi
 
 
 if [ "$ACTION" = "backup" ]; then
+    if [ ! -z "$PRE_SCRIPT" ] ; then
+        $PRE_SCRIPT
+    fi
     backup
     cleanup
 elif [ "$ACTION" = "list" ]; then

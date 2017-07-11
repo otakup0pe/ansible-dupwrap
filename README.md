@@ -64,13 +64,16 @@ These options change the default behaviour. Note that some actions will require 
 * `status` basic information on the backup set
 * `prune` will remove old backups. If no profile is specified then every found backup will be purged.
 
-
 On macOS, there are some additional actions available.
 
 * `init` will create the encrypted disk image
 * `purge` will remove the encrypted disk image
 * `mount` will mount the encrypted disk image
 * `unmount` will unmount the encrypted disk image
+
+## Swap Helper
+
+The swap helper script (`dupwrap-swap-helper`) is meant to be used with the `pre_script` and `post_script` job variables. It is invoked with a single argument which is either `pre` or `post`.
 
 # License
 

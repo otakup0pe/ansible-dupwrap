@@ -56,3 +56,11 @@
     job: "bash -c '{{dupwrap_bin_prefix}}/dupwrap prune'"
     user: "{{dupwrap_user}}"
   when: dupwrap_cron
+- name: install some helpers
+  copy:
+    src: "{{item}}_helper.sh"
+    dest: "{{dupwrap_bin_prefix}}/dupwrap-{{item}}-helper"
+    owner: "{{dupwrap_user}}"
+    group: "{{dupwrap_group}}"
+    mode: 0770
+  with_items: "{{dupwrap_helpers}}"
