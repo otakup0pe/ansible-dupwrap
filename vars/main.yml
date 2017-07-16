@@ -2,7 +2,7 @@
 dupwrap_debian_pkgs:
 - duplicity
 - s3cmd
-- ncftp
+- lftp
 dupwrap_debian_pips:
 - boto
 dupwrap_darwin_brews:

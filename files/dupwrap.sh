@@ -364,6 +364,13 @@ elif [ "$DESTINATION" == "mac_usb" ] ; then
         problems "invalid os"
     fi
     BACKUP_TARGET="file:///Volumes/${ENCRYPTED_VOLUME}"
+elif [ "$DESTINATION" == "ftp" ] ; then
+    if [ -z "$FTP_USER" ] || \
+           [ -z "$FTP_PASSWORD" ] ; then
+        problems "invalid ftp configuration"
+    fi
+    export FTP_PASSWORD
+    BACKUP_TARGET="ftp://${FTP_USER}@${FTP_HOST}/${FTP_PATH}"
 else
     problems "Unknown destination ${DESTINATION}"
 fi

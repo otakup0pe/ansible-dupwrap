@@ -19,7 +19,14 @@
     group: "{{dupwrap_group}}"
     mode: 0640
   with_items: "{{dupwrap_backups}}"
+  when: item.state|default("present") == "present"
   no_log: true
+- name: "remove unwanted configs"
+  file:
+    path: "{{dupwrap_config_prefix}}/dupwrap/{{item.name}}.conf"
+    state: absent
+  with_items: "{{dupwrap_backups}}"
+  when: item.state|default("present") == "absent"
 - name: install wrapper
   copy:
     src: dupwrap.sh
