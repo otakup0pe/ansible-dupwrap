@@ -74,7 +74,7 @@ function exec_dup {
             RC=$?
             ;;
         *)
-            ${e_cmd[*]} | tee "${LOG_DIRECTORY}/dupwrap.log"
+            ${e_cmd[*]} | tee -a "${LOG_DIRECTORY}/dupwrap.log"
             RC=${PIPESTATUS[0]}
             ;;
     esac
