@@ -44,7 +44,7 @@
       bash -c '{{dupwrap_bin_prefix}}/dupwrap backup
       {% if dupwrap_cron_verbose -%}
       -v &>> {{dupwrap_log_prefix}}/dupwrap.log
-      {% endif -%}'
+      {%- endif -%}'
     user: "{{dupwrap_user}}"
   when: dupwrap_cron
 - name: set cron backup prune
@@ -56,8 +56,8 @@
     job: >
       bash -c '{{dupwrap_bin_prefix}}/dupwrap prune
       {% if dupwrap_cron_verbose -%}
-      -v &>> {{dupwrap_log_prefix}}/dupwrap.log'
-      {% endif -%}'
+      -v &>> {{dupwrap_log_prefix}}/dupwrap.log
+      {%- endif -%}'
     user: "{{dupwrap_user}}"
   when: dupwrap_cron
 - name: install some helpers
