@@ -10,10 +10,7 @@ declare OS
 declare VERBOSE
 declare FORCE
 
-# Some dotfiles set this :v
-if [ -z "$OS" ] ; then
-    OS="$(uname -s)"
-fi
+OS="$(uname -s)"
 
 # Clean up after ourselves as neccesary
 function cleanup {
@@ -23,6 +20,34 @@ function cleanup {
     if [ ! -z "$POST_SCRIPT" ] ; then
         $POST_SCRIPT
     fi    
+}
+
+# We do occasionally enjoy metrics
+function event {
+    local EVENT="$1"
+    local METRIC
+    if [ ! -z "$STATSD_HOST" ] && \
+           [ ! -z "$STATSD_PORT" ] && \
+           [ ! -z "$STATSD_PROTO" ] ; then
+        METRIC="dupwrap.$(hostname -s).${NAME}.${EVENT}:1|c"
+        if [ "$OS" == "Linux" ] ; then
+            echo "$METRIC" > "/dev/${STATSD_PROTO}/${STATSD_HOST}/${STATSD_PORT}"
+        fi
+    fi
+}
+function stat {
+    local STAT="$1"
+    local VAL="$2"
+    local METRIC
+    if [ ! -z "$STATSD_HOST" ] && \
+           [ ! -z "$STATSD_PORT" ] && \
+           [ ! -z "$STATSD_PROTO" ] ; then
+        METRIC="dupwrap.$(hostname -s).${NAME}.${STAT}:${VAL}|ms"
+        if [ "$OS" == "Linux" ] ; then
+            echo "$METRIC" > "/dev/${STATSD_PROTO}/${STATSD_HOST}/${STATSD_PORT}"
+        fi
+    fi
+    
 }
 
 # Just a simple logger
@@ -40,6 +65,7 @@ function dbg {
 
 # Just a simple error handler
 function problems {
+    event error
     log "Problem: ${1}"
     cleanup
     exit 1
@@ -80,6 +106,7 @@ function exec_dup {
     esac
     FINISH=$(date +%s)
     local TIME=$((FINISH - START))
+    stat duration "$TIME"
     if [ "$RC" == "0" ] ; then
         log "${CMD} succesful after ${TIME}s"
     else
@@ -158,7 +185,7 @@ function unmount_volume {
 function backup() {
     declare -a cmd
     # don't glob tho
-    set -f    
+    set -f
     cmd=(backup --full-if-older-than "$FULL_IF_OLDER")
     for CDIR in $SOURCE ; do
         cmd=(${cmd[@]} --include "$CDIR")
@@ -168,7 +195,9 @@ function backup() {
         cmd=(${cmd[@]} --exclude node_modules --exclude .git --exclude .svn --exclude .hg)
     fi
     cmd=(${cmd[@]} "/" "$BACKUP_TARGET")
+    event start
     exec_dup "${cmd[@]}"
+    event end
 }
 
 # Display a listing of files in the backup set
@@ -205,8 +234,10 @@ function restore() {
 # Removes non incremental and backup sets older than a
 # configured amount of time
 function prune() {
+    event prune_start
     exec_dup remove-all-inc-of-but-n-full "$KEEP_N_FULL" --force "$BACKUP_TARGET"
     exec_dup remove-older-than "$REMOVE_OLDER" --force "$BACKUP_TARGET"
+    event prune_end
 }
 
 function clean_backups() {
