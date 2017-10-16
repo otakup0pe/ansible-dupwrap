@@ -68,3 +68,8 @@
     group: "{{dupwrap_group}}"
     mode: 0770
   with_items: "{{dupwrap_helpers}}"
+- name: "remove verbose log file"
+  file:
+    path: "{{dupwrap_log_prefix}}/dupwrap.log"
+    state: absent
+  when: not dupwrap_cron_verbose
