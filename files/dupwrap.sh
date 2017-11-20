@@ -10,7 +10,9 @@ declare OS
 declare VERBOSE
 declare FORCE
 
+# Some standards
 OS="$(uname -s)"
+umask 037
 
 # Clean up after ourselves as neccesary
 function cleanup {
