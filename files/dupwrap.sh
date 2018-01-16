@@ -297,7 +297,11 @@ if [ "$ACTION" == "restore" ] ; then
     shift
 fi
 
-while getopts "dfvc:p:t:" arg; do
+if [ "$ACTION" == "help" ] ; then
+    usage
+fi
+
+while getopts "dfvc:p:t:h" arg; do
     case $arg in
         d)
             UNMOUNT="false"
@@ -316,6 +320,9 @@ while getopts "dfvc:p:t:" arg; do
             ;;
         t)
             RESTORE_TIME="$OPTARG"
+            ;;
+        h)
+            usage
             ;;
         *)
             usage
