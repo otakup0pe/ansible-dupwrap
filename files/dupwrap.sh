@@ -420,10 +420,14 @@ if [ "$OS" == "Darwin" ] ; then
     # lol case insentive -d on macs
     # shellcheck disable=SC2010
     if ! (ls -1 /Volumes | grep "$UNENCRYPTED_VOLUME" &> /dev/null) ; then
-        UNENCRYPTED_VOLUME=$(tr '[:lower:]' '[:upper:]' <<< "$UNENCRYPTED_VOLUME")
         # FAT is always uppercase, so check
         if ! (ls -1 /Volumes | grep "$UNENCRYPTED_VOLUME" &> /dev/null) ; then
-            problems "unencrypted volume ${UNENCRYPTED_VOLUME} not found"
+            UNMOUNTED="$(diskutil list | grep "$UNENCRYPTED_VOLUME" | cut -c 69-)"
+            if [ ! -z "$UNMOUNTED" ] ; then
+                diskutil mount "/dev/${UNMOUNTED}"
+            else
+                problems "unencrypted volume ${UNENCRYPTED_VOLUME} not found"
+            fi
         fi
     fi    
     if [ "$ACTION" == "init" ] ; then
