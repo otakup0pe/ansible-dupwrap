@@ -16,6 +16,9 @@ umask 037
 
 # Clean up after ourselves as neccesary
 function cleanup {
+    if [ ! -z "$CUR_ULIMIT" ] ; then
+        ulimit -n "$CUR_ULIMIT"
+    fi
     if [ "$DESTINATION" == "mac_usb" ] && [ "$ACTION" != "init" ] ; then
         unmount_volume
     fi
@@ -429,7 +432,7 @@ if [ "$OS" == "Darwin" ] ; then
                 problems "unencrypted volume ${UNENCRYPTED_VOLUME} not found"
             fi
         fi
-    fi    
+    fi
     if [ "$ACTION" == "init" ] ; then
         mac_usb_init
         exit
@@ -445,6 +448,11 @@ if [ "$OS" == "Darwin" ] ; then
     else
         mount_volume
     fi
+fi
+CUR_ULIMIT=$(ulimit -n)
+if [ "${CUR_ULIMIT}" -lt 1024 ] ; then
+    ulimit -n 1024
+    log "ulimit of ${CUR_ULIMIT} is too low"
 fi
 
 
