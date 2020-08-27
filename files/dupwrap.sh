@@ -24,7 +24,7 @@ function cleanup {
     fi
     if [ ! -z "$POST_SCRIPT" ] ; then
         $POST_SCRIPT
-    fi    
+    fi
 }
 
 # We do occasionally enjoy metrics
@@ -52,7 +52,7 @@ function stat {
             echo "$METRIC" > "/dev/${STATSD_PROTO}/${STATSD_HOST}/${STATSD_PORT}"
         fi
     fi
-    
+
 }
 
 # Just a simple logger
@@ -116,7 +116,7 @@ function exec_dup {
         log "${CMD} succesful after ${TIME}s"
     else
         problems "UNABLE to ${CMD} after ${TIME}s"
-    fi    
+    fi
 }
 
 # Will handle the creation of a encrypted disk image on a mac
@@ -233,7 +233,7 @@ function restore() {
     else
         cmd=(${cmd[@]} --force --time "$1" "$BACKUP_TARGET" "$2")
     fi
-    exec_dup "${cmd[*]}"    
+    exec_dup "${cmd[*]}"
 }
 
 # Removes non incremental and backup sets older than a
@@ -290,8 +290,8 @@ UNMOUNT="true"
 shift
 
 if [ "$ACTION" == "restore_file" ] ; then
-    RESTORE_FILE="$2"
-    RESTORE_DEST="$3"
+    RESTORE_FILE="$1"
+    RESTORE_DEST="$2"
     shift 2
 fi
 
@@ -382,7 +382,7 @@ if [ -z "$PASSPHRASE" ] ; then
 fi
 export PASSPHRASE="$PASSPHRASE"
 
-if [ -z "$KEEP_N_FULL" ] || 
+if [ -z "$KEEP_N_FULL" ] ||
        [ -z "$REMOVE_OLDER" ] || \
        [ -z "$FULL_IF_OLDER" ] ; then
     problems "invalid rotation configuration"
@@ -468,14 +468,14 @@ elif [ "$ACTION" = "list" ]; then
 elif [ "$ACTION" = "restore" ] ; then
     if [ -z "$RESTORE_TIME" ] ; then
         restore "$RESTORE_DEST"
-    else        
+    else
         restore "$RESTORE_DEST" "$RESTORE_TIME"
     fi
 elif [ "$ACTION" = "restore_file" ]; then
-    if [ -z "$RESTORE_TIME" ] ; then    
-        restore "$RESTORE_FILE" "$RESTORE_DEST"
+    if [ -z "$RESTORE_TIME" ] ; then
+        restore_file "$RESTORE_FILE" "$RESTORE_DEST"
     else
-        restore "$RESTORE_FILE" "$RESTORE_TIME" "$RESTORE_DEST"
+        restore_file "$RESTORE_FILE" "$RESTORE_TIME" "$RESTORE_DEST"
     fi
     cleanup
 elif [ "$ACTION" = "status" ]; then
