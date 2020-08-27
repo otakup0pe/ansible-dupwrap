@@ -192,6 +192,9 @@ function backup() {
     # don't glob tho
     set -f
     cmd=(backup --full-if-older-than "$FULL_IF_OLDER")
+    if [ -n "$WANDERING" ] ; then
+        cmd=(${cmd[@]} --allow-source-mismatch)
+    fi
     for CDIR in $SOURCE ; do
         cmd=(${cmd[@]} --include "$CDIR")
     done
