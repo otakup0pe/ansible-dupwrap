@@ -263,7 +263,8 @@ function usage() {
   dupwrap backup
   dupwrap list
   dupwrap status
-  dupwarp prune
+  dupwarp prune (old backups)
+  dupwrap clean (failed backups)
   dupwrap restore [dest]
   dupwrap restore_file src [time] dest
 
