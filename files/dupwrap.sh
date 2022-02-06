@@ -8,6 +8,7 @@ declare UNENCRYPTED_VOLUME
 declare ENCRYPTED_VOLUME
 declare OS
 declare VERBOSE
+declare QUIET
 declare FORCE
 
 # Some standards
@@ -16,13 +17,13 @@ umask 037
 
 # Clean up after ourselves as neccesary
 function cleanup {
-    if [ ! -z "$CUR_ULIMIT" ] ; then
+    if [ -n "$CUR_ULIMIT" ] ; then
         ulimit -n "$CUR_ULIMIT"
     fi
     if [ "$DESTINATION" == "mac_usb" ] && [ "$ACTION" != "init" ] ; then
         unmount_volume
     fi
-    if [ ! -z "$POST_SCRIPT" ] ; then
+    if [ -n "$POST_SCRIPT" ] ; then
         $POST_SCRIPT
     fi
 }
@@ -31,9 +32,9 @@ function cleanup {
 function event {
     local EVENT="$1"
     local METRIC
-    if [ ! -z "$STATSD_HOST" ] && \
-           [ ! -z "$STATSD_PORT" ] && \
-           [ ! -z "$STATSD_PROTO" ] ; then
+    if [ -n "$STATSD_HOST" ] && \
+           [ -n "$STATSD_PORT" ] && \
+           [ -n "$STATSD_PROTO" ] ; then
         METRIC="dupwrap.$(hostname -s).${NAME}.${EVENT}:1|c"
         if [ "$OS" == "Linux" ] ; then
             echo "$METRIC" > "/dev/${STATSD_PROTO}/${STATSD_HOST}/${STATSD_PORT}"
@@ -44,9 +45,9 @@ function stat {
     local STAT="$1"
     local VAL="$2"
     local METRIC
-    if [ ! -z "$STATSD_HOST" ] && \
-           [ ! -z "$STATSD_PORT" ] && \
-           [ ! -z "$STATSD_PROTO" ] ; then
+    if [ -n "$STATSD_HOST" ] && \
+           [ -n "$STATSD_PORT" ] && \
+           [ -n "$STATSD_PROTO" ] ; then
         METRIC="dupwrap.$(hostname -s).${NAME}.${STAT}:${VAL}|ms"
         if [ "$OS" == "Linux" ] ; then
             echo "$METRIC" > "/dev/${STATSD_PROTO}/${STATSD_HOST}/${STATSD_PORT}"
@@ -63,7 +64,7 @@ function log {
 
 # Just a simple debugger
 function dbg {
-    if [ ! -z "$VERBOSE" ] ; then
+    if [ -n "$VERBOSE" ] ; then
         log "dbg ${1}"
     fi
 }
@@ -90,10 +91,14 @@ function exec_dup {
         e_cmd=(${e_cmd[@]} $CMD)
     fi
     e_cmd=(${e_cmd[@]} --name "$NAME")
-    if [ ! -z "$VERBOSE" ] ; then
-        e_cmd=(${e_cmd[@]} --verbosity debug)
+    log_level="notice"
+    if [ -n "$VERBOSE" ] ; then
+	log_level="debug"
+    elif [ -n "$QUIET" ] ; then
+	log_level="warning"
     fi
-    if [ ! -z "$ARCHIVE_DIR" ] ; then
+    e_cmd=(${e_cmd[@]} --verbosity "$log_level")
+    if [ -n "$ARCHIVE_DIR" ] ; then
         e_cmd=(${e_cmd[@]} --archive-dir "$ARCHIVE_DIR")
     fi
     e_cmd=(${e_cmd[@]} ${A_CMD[@]:1})
@@ -113,7 +118,9 @@ function exec_dup {
     local TIME=$((FINISH - START))
     stat duration "$TIME"
     if [ "$RC" == "0" ] ; then
-        log "${CMD} succesful after ${TIME}s"
+	if [ -z "$QUIET" ] ; then
+            log "${CMD} succesful after ${TIME}s"
+	fi
     else
         problems "UNABLE to ${CMD} after ${TIME}s"
     fi
@@ -308,8 +315,11 @@ if [ "$ACTION" == "help" ] ; then
     usage
 fi
 
-while getopts "dfvc:p:t:h" arg; do
+while getopts "qdfvc:p:t:h" arg; do
     case $arg in
+	q)
+	    QUIET="true"
+	    ;;
         d)
             UNMOUNT="false"
             ;;
@@ -337,6 +347,10 @@ while getopts "dfvc:p:t:h" arg; do
     esac
 done
 
+if [ -n "$QUIET" ] && [ -n "$VERBOSE" ] ; then
+    problems "please do not specify verbose and quiet at the same time"
+fi
+
 if [ "$(whoami)" == "root" ] ; then
     DUPWRAP_CONF_PREFIX="/etc/dupwrap"
 else
@@ -360,7 +374,7 @@ if [ -z "$DUPWRAP_CONF" ] && [ -z "$DUPWRAP_PROFILE" ] ; then
     else
         problems "must specify profile or config"
     fi
-elif [ ! -z "$DUPWRAP_PROFILE" ] ; then
+elif [ -n "$DUPWRAP_PROFILE" ] ; then
     DUPWRAP_CONF="${DUPWRAP_CONF_PREFIX}/${DUPWRAP_PROFILE}.conf"
 fi
 
@@ -430,7 +444,7 @@ if [ "$OS" == "Darwin" ] ; then
         # FAT is always uppercase, so check
         if ! (ls -1 /Volumes | grep "$UNENCRYPTED_VOLUME" &> /dev/null) ; then
             UNMOUNTED="$(diskutil list | grep "$UNENCRYPTED_VOLUME" | cut -c 69-)"
-            if [ ! -z "$UNMOUNTED" ] ; then
+            if [ -n "$UNMOUNTED" ] ; then
                 diskutil mount "/dev/${UNMOUNTED}"
             else
                 problems "unencrypted volume ${UNENCRYPTED_VOLUME} not found"
@@ -461,7 +475,7 @@ fi
 
 
 if [ "$ACTION" = "backup" ]; then
-    if [ ! -z "$PRE_SCRIPT" ] ; then
+    if [ -n "$PRE_SCRIPT" ] ; then
         $PRE_SCRIPT
     fi
     backup

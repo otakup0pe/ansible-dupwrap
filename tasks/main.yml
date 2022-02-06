@@ -1,9 +1,11 @@
 ---
 - include: "deps.yml"
+
 - name: "remove old config"
   file:
     path: "{{dupwrap_config_prefix}}/dupwrap.conf"
     state: absent
+
 - name: "create dupwrap config directory"
   file:
     path: "{{dupwrap_config_prefix}}/dupwrap"
@@ -11,22 +13,25 @@
     mode: 0770
     owner: "{{dupwrap_user}}"
     group: "{{dupwrap_group}}"
+
 - name: "generate configs"
   template:
-    src: dupwrap.conf
+    src: "dupwrap.conf.j2"
     dest: "{{dupwrap_config_prefix}}/dupwrap/{{item.name}}.conf"
     owner: "{{dupwrap_user}}"
     group: "{{dupwrap_group}}"
     mode: 0640
-  with_items: "{{dupwrap_backups}}"
+  loop: "{{dupwrap_backups}}"
   when: item.state|default("present") == "present"
   no_log: true
+
 - name: "remove unwanted configs"
   file:
     path: "{{dupwrap_config_prefix}}/dupwrap/{{item.name}}.conf"
     state: absent
-  with_items: "{{dupwrap_backups}}"
+  loop: "{{dupwrap_backups}}"
   when: item.state|default("present") == "absent"
+
 - name: install wrapper
   copy:
     src: dupwrap.sh
@@ -34,6 +39,7 @@
     owner: "{{dupwrap_user}}"
     group: "{{dupwrap_group}}"
     mode: 0750
+
 - name: set daily cronjob
   cron:
     cron_file: "dupwrap_backup"
@@ -44,9 +50,12 @@
       bash -c '{{dupwrap_bin_prefix}}/dupwrap backup
       {% if dupwrap_cron_verbose -%}
       -v &>> {{dupwrap_log_prefix}}/dupwrap.log
+      {% else %}
+      -q
       {%- endif -%}'
     user: "{{dupwrap_user}}"
   when: dupwrap_cron
+
 - name: set cron backup prune
   cron:
     cron_file: dupwrap_prune
@@ -60,6 +69,7 @@
       {%- endif -%}'
     user: "{{dupwrap_user}}"
   when: dupwrap_cron
+
 - name: install some helpers
   copy:
     src: "{{item}}_helper.sh"
@@ -67,7 +77,8 @@
     owner: "{{dupwrap_user}}"
     group: "{{dupwrap_group}}"
     mode: 0770
-  with_items: "{{dupwrap_helpers}}"
+  loop: "{{dupwrap_helpers}}"
+
 - name: "remove verbose log file"
   file:
     path: "{{dupwrap_log_prefix}}/dupwrap.log"

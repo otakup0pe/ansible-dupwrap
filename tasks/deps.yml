@@ -4,17 +4,20 @@
     pkg: "{{dupwrap_debian_pkgs}}"
     state: latest
   when: ansible_os_family == 'Debian'
+
 - name: "install dependency pips for linux"
   pip:
     name: "{{dupwrap_debian_pips}}"
     state: latest
   with_items: "{{dupwrap_debian_pips}}"
   when: ansible_os_family == 'Debian'
+
 - name: "install dependency packages for mac"
   homebrew:
     pkg: "{{dupwrap_darwin_brews}}"
     state: latest
   when: ansible_os_family == 'Darwin'
+
 - name: "install dependency pips for mac"
   pip:
     name: "{{dupwrap_darwin_pips}}"
