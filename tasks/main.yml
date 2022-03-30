@@ -66,6 +66,8 @@
       bash -c '{{dupwrap_bin_prefix}}/dupwrap prune
       {% if dupwrap_cron_verbose -%}
       -v &>> {{dupwrap_log_prefix}}/dupwrap.log
+      {% else %}
+      -q
       {%- endif -%}'
     user: "{{dupwrap_user}}"
   when: dupwrap_cron

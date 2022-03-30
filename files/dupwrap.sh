@@ -362,14 +362,14 @@ if [ -z "$DUPWRAP_CONF" ] && [ -z "$DUPWRAP_PROFILE" ] ; then
     if [ "$ACTION" == "backup" ]  ; then
         dbg "Executing backup for all profiles"
         for p in "${DUPWRAP_CONF_PREFIX}/"*.conf ; do
-            VERBOSE="$VERBOSE" "$0" backup -c "$p" -d
+            VERBOSE="$VERBOSE" QUIET="$QUIET" "$0" backup -c "$p" -d
         done
         cleanup
         exit
     elif [ "$ACTION" == "prune" ] ; then
         dbg "Executing prune for all profiles"
         for p in "${DUPWRAP_CONF_PREFIX}/"*.conf ; do
-            VERBOSE="$VERBOSE" "$0" prune -c "$p"
+            VERBOSE="$VERBOSE" QUIET="$QUIET" "$0" prune -c "$p"
         done
     else
         problems "must specify profile or config"

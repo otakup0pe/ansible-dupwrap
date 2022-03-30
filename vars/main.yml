@@ -1,14 +1,14 @@
 ---
 dupwrap_debian_pkgs:
-- duplicity
-- s3cmd
-- lftp
+  - "duplicity"
+  - "s3cmd"
+  - "lftp"
 dupwrap_debian_pips:
-- boto
+  - "boto"
 dupwrap_darwin_brews:
-- s3cmd
-- ncftp
+  - "s3cmd"
+  - "ncftp"
 dupwrap_darwin_pips:
-- boto
+  - "boto"
 dupwrap_helpers:
-- swap
+  - "swap"
