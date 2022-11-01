@@ -27,8 +27,11 @@ ARCHIVE_DIR="{{item.cache_dir|default(dupwrap_cache_dir)}}"
 {% endif -%}
 {% if item.destination == 's3' -%}
 # S3 configuration
+{% if item.aws_access_key|default(dupwrap_aws_access_key) != '' and
+   item.aws_secret_key|default(dupwrap_aws_secret_key) != '' %}
 AWS_ACCESS_KEY_ID="{{ item.aws_access_key|default(dupwrap_aws_access_key) }}"
-AWS_SECRET_ACCESS_KEY="{{ item.aws_access_key|default(dupwrap_aws_secret_key) }}"
+AWS_SECRET_ACCESS_KEY="{{ item.aws_secret_key|default(dupwrap_aws_secret_key) }}"
+{% endif %}
 BUCKET="{{ item.bucket }}"
 {% elif item.destination == 'mac_usb' -%}
 # Local Mac configuration

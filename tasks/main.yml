@@ -23,7 +23,7 @@
     mode: 0640
   loop: "{{dupwrap_backups}}"
   when: item.state|default("present") == "present"
-  no_log: true
+  no_log: "{{dupwrap_debug|default(True)}}"
 
 - name: "remove unwanted configs"
   file:
@@ -40,21 +40,27 @@
     group: "{{dupwrap_group}}"
     mode: 0750
 
+- name: "remove old nightly cronjob"
+  file:
+    path: "/etc/cron.d/dupwrap_backup"
+    state: "absent"
+
 - name: set daily cronjob
   cron:
-    cron_file: "dupwrap_backup"
+    cron_file: "dupwrap-backup-{{item.name}}"
     name: "YOLO nightly backup"
     special_time: daily
-    state: present
     job: >
-      bash -c '{{dupwrap_bin_prefix}}/dupwrap backup
+      bash -c '{{dupwrap_bin_prefix}}/dupwrap backup -p {{ item.name }}
       {% if dupwrap_cron_verbose -%}
       -v &>> {{dupwrap_log_prefix}}/dupwrap.log
       {% else %}
       -q
       {%- endif -%}'
     user: "{{dupwrap_user}}"
-  when: dupwrap_cron
+    state: "{% if item.cron|default(dupwrap_cron) %}present\
+    {% else %}absent{% endif %}"
+  loop: "{{dupwrap_backups}}"
 
 - name: set cron backup prune
   cron:

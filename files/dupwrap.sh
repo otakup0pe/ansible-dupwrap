@@ -100,6 +100,7 @@ function exec_dup {
     e_cmd=(${e_cmd[@]} --verbosity "$log_level")
     if [ -n "$ARCHIVE_DIR" ] ; then
         e_cmd=(${e_cmd[@]} --archive-dir "$ARCHIVE_DIR")
+	export TMPDIR="${ARCHIVE_DIR}"
     fi
     e_cmd=(${e_cmd[@]} ${A_CMD[@]:1})
     dbg "executing ${e_cmd[*]}"
@@ -407,14 +408,14 @@ if [ -z "$KEEP_N_FULL" ] ||
 fi
 
 if [ "$DESTINATION" == "s3" ] ; then
-    if [ -z "$BUCKET" ] || \
-           [ -z "$AWS_ACCESS_KEY_ID" ] || \
-           [ -z "$AWS_SECRET_ACCESS_KEY" ] ; then
+    if [ -z "$BUCKET" ] ; then \
         problems "bad configuration"
     fi
     BACKUP_TARGET="$BUCKET"
-    export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
-    export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
+    if [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ] ; then
+       export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
+       export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
+    fi
 elif [ "$DESTINATION" == "mac_usb" ] ; then
     if [ -z "$UNENCRYPTED_VOLUME" ] || \
            [ -z "$ENCRYPTED_VOLUME" ] || \

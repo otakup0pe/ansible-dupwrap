@@ -24,7 +24,7 @@ fi
 . "$DUPWRAP_CONF"
 
 SWAPFILE="${HOME}/.cache/duplicity/swap"
-if [ ! -z "$ARCHIVE_DIR" ] ; then
+if [ -n "$ARCHIVE_DIR" ] ; then
     SWAPFILE="${ARCHIVE_DIR}/swap"
 fi
 SWAPDIR=$(dirname "$SWAPFILE")
