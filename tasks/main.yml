@@ -32,9 +32,9 @@
   loop: "{{dupwrap_backups}}"
   when: item.state|default("present") == "absent"
 
-- name: install wrapper
+- name: "install wrapper"
   copy:
-    src: dupwrap.sh
+    src: "dupwrap.sh"
     dest: "{{dupwrap_bin_prefix}}/dupwrap"
     owner: "{{dupwrap_user}}"
     group: "{{dupwrap_group}}"
@@ -45,11 +45,11 @@
     path: "/etc/cron.d/dupwrap_backup"
     state: "absent"
 
-- name: set daily cronjob
+- name: "set daily cronjob"
   cron:
     cron_file: "dupwrap-backup-{{item.name}}"
     name: "YOLO nightly backup"
-    special_time: daily
+    special_time: "daily"
     job: >
       bash -c '{{dupwrap_bin_prefix}}/dupwrap backup -p {{ item.name }}
       {% if dupwrap_cron_verbose -%}
@@ -62,23 +62,25 @@
     {% else %}absent{% endif %}"
   loop: "{{dupwrap_backups}}"
 
-- name: set cron backup prune
+- name: "set cron backup prune"
   cron:
-    cron_file: dupwrap_prune
+    cron_file: "dupwrap-prune-{{item.name}}"
     name: "yolo prune backups"
     special_time: "weekly"
-    state: present
     job: >
-      bash -c '{{dupwrap_bin_prefix}}/dupwrap prune
+      bash -c '{{dupwrap_bin_prefix}}/dupwrap prune -p {{item.name}}
       {% if dupwrap_cron_verbose -%}
       -v &>> {{dupwrap_log_prefix}}/dupwrap.log
       {% else %}
       -q
       {%- endif -%}'
     user: "{{dupwrap_user}}"
-  when: dupwrap_cron
+    state: "{% if item.cron|default(dupwrap_cron) %}present\
+    {% else %}absent{% endif %}"
+  loop: "{{dupwrap_backups}}"
 
-- name: install some helpers
+
+- name: "install some helpers"
   copy:
     src: "{{item}}_helper.sh"
     dest: "{{dupwrap_bin_prefix}}/dupwrap-{{item}}-helper"
@@ -87,8 +89,21 @@
     mode: 0770
   loop: "{{dupwrap_helpers}}"
 
-- name: "remove verbose log file"
+- include_role:
+    name: nickhammond.logrotate
+  vars:
+    logrotate_scripts:
+      - name: "dupwrap-{{item.name}}"
+        path: "{{dupwrap_log_prefix}}/dupwrap-{{item.name}}.log"
+        options:
+          - weekly
+          - missingok
+          - rotate 4
+          - compress
+          - "create 0640 {{dupwrap_user}} {{dupwrap_group}}"
+  loop: "{{dupwrap_backups}}"
+
+- name: "remove old log file, if present"
   file:
     path: "{{dupwrap_log_prefix}}/dupwrap.log"
-    state: absent
-  when: not dupwrap_cron_verbose
+    state: "absent"

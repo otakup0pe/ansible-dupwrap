@@ -105,16 +105,12 @@ function exec_dup {
     e_cmd=(${e_cmd[@]} ${A_CMD[@]:1})
     dbg "executing ${e_cmd[*]}"
     START=$(date +%s)
-    case "$-" in
-        *i*)
-            ${e_cmd[*]}
-            RC=$?
-            ;;
-        *)
-            ${e_cmd[*]} | tee -a "${LOG_DIRECTORY}/dupwrap.log"
-            RC=${PIPESTATUS[0]}
-            ;;
-    esac
+    if [ -n "$QUIET" ] ; then
+	${e_cmd[*]} >> "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log"
+    else
+	${e_cmd[*]} | tee -a "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log"
+    fi
+    RC=${PIPESTATUS[0]}
     FINISH=$(date +%s)
     local TIME=$((FINISH - START))
     stat duration "$TIME"

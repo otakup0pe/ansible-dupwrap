@@ -11,15 +11,3 @@ galaxy_info:
     - name: Ubuntu
       versions:
         - all
-dependencies:
-  - role: nickhammond.logrotate
-    logrotate_scripts:
-      - name: dupwrap
-        path: "{{dupwrap_log_prefix}}/dupwrap.log"
-        options:
-          - weekly
-          - missingok
-          - rotate 4
-          - compress
-          - "create 0640 {{dupwrap_user}} {{dupwrap_group}}"
-    when: dupwrap_cron_verbose
