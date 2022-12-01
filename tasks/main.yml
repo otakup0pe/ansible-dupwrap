@@ -66,7 +66,8 @@
   cron:
     cron_file: "dupwrap-prune-{{item.name}}"
     name: "yolo prune backups"
-    special_time: "weekly"
+    hour: "2"
+    weekday: "sunday"
     job: >
       bash -c '{{dupwrap_bin_prefix}}/dupwrap prune -p {{item.name}}
       {% if dupwrap_cron_verbose -%}
