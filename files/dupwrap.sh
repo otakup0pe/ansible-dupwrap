@@ -28,19 +28,6 @@ function cleanup {
     fi
 }
 
-# We do occasionally enjoy metrics
-function event {
-    local EVENT="$1"
-    local METRIC
-    if [ -n "$STATSD_HOST" ] && \
-           [ -n "$STATSD_PORT" ] && \
-           [ -n "$STATSD_PROTO" ] ; then
-        METRIC="dupwrap.$(hostname -s).${NAME}.${EVENT}:1|c"
-        if [ "$OS" == "Linux" ] ; then
-            echo "$METRIC" > "/dev/${STATSD_PROTO}/${STATSD_HOST}/${STATSD_PORT}"
-        fi
-    fi
-}
 function stat {
     local STAT="$1"
     local VAL="$2"
@@ -58,7 +45,7 @@ function stat {
 
 # Just a simple logger
 function log {
-    echo "${1}"
+    >&2 echo "${1}"
     logger "dupwrap ${1}"
 }
 
@@ -71,7 +58,6 @@ function dbg {
 
 # Just a simple error handler
 function problems {
-    event error
     log "Problem: ${1}"
     cleanup
     exit 1
@@ -207,9 +193,7 @@ function backup() {
         cmd=(${cmd[@]} --exclude node_modules --exclude .git --exclude .svn --exclude .hg)
     fi
     cmd=(${cmd[@]} "/" "$BACKUP_TARGET")
-    event start
     exec_dup "${cmd[@]}"
-    event end
 }
 
 # Display a listing of files in the backup set
@@ -246,10 +230,8 @@ function restore() {
 # Removes non incremental and backup sets older than a
 # configured amount of time
 function prune() {
-    event prune_start
     exec_dup remove-all-inc-of-but-n-full "$KEEP_N_FULL" --force "$BACKUP_TARGET"
     exec_dup remove-older-than "$REMOVE_OLDER" --force "$BACKUP_TARGET"
-    event prune_end
 }
 
 function clean_backups() {
