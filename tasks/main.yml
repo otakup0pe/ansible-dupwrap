@@ -1,5 +1,5 @@
 ---
-- include: "deps.yml"
+- include_tasks: "deps.yml"
 
 - name: "remove old config"
   file:
