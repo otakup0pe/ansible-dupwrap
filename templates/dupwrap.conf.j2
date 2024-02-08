@@ -15,12 +15,6 @@ REMOVE_OLDER="{{ item.n_full|default(dupwrap_remove_older) }}"
 FULL_IF_OLDER="{{ item.n_full|default(dupwrap_full_older) }}"
 # GPG Passphrase
 PASSPHRASE="{{ item.passphrase|default(dupwrap_passphrase) }}"
-{% if item.metrics|default(False) -%}
-# Metrics to StatsD
-STATSD_HOST="{{item.statsd_host|default(dupwrap_statsd_host)}}"
-STATSD_PORT="{{item.statsd_port|default(dupwrap_statsd_port)}}"
-STATSD_PROTO="{{item.statsd_proto|default(dupwrap_statsd_proto)}}"
-{% endif -%}
 {% if item.cache_dir|default(dupwrap_cache_dir)|default('') != '' -%}
 # Do not use the default duplicity cache
 ARCHIVE_DIR="{{item.cache_dir|default(dupwrap_cache_dir)}}"
@@ -48,4 +42,8 @@ FTP_PATH="{{item.ftp_path|default('')}}"
 # Some backups move beteween hosts
 {% if item.wandering|default(False) -%}
 WANDERING="yes"
+{% endif %}
+{% if item.metrics|default(dupwrap_metrics) %}
+METRICS="true"
+PROMTEXT_PATH="{{dupwrap_promtext_path}}"
 {% endif %}

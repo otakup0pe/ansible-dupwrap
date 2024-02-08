@@ -10,6 +10,7 @@ declare OS
 declare VERBOSE
 declare QUIET
 declare FORCE
+declare METRICS
 
 # Some standards
 OS="$(uname -s)"
@@ -28,21 +29,6 @@ function cleanup {
     fi
 }
 
-function stat {
-    local STAT="$1"
-    local VAL="$2"
-    local METRIC
-    if [ -n "$STATSD_HOST" ] && \
-           [ -n "$STATSD_PORT" ] && \
-           [ -n "$STATSD_PROTO" ] ; then
-        METRIC="dupwrap.$(hostname -s).${NAME}.${STAT}:${VAL}|ms"
-        if [ "$OS" == "Linux" ] ; then
-            echo "$METRIC" > "/dev/${STATSD_PROTO}/${STATSD_HOST}/${STATSD_PORT}"
-        fi
-    fi
-
-}
-
 # Just a simple logger
 function log {
     >&2 echo "${1}"
@@ -56,11 +42,40 @@ function dbg {
     fi
 }
 
+# warn tho
+function warn {
+    log "warning: ${1}"
+}
+
 # Just a simple error handler
 function problems {
     log "Problem: ${1}"
     cleanup
     exit 1
+}
+
+# Write out to prometheus textfile
+function prom_write {
+    [ "$#" == 3 ] || problems "prom_write invalid args"
+    [ -z "$METRICS" ] && return
+    local METRIC="$1"
+    local TASK="$2"
+    local VALUE="$3"
+    dbg "prom_write ${METRIC} ${TASK} - ${VALUE}"
+    if [ ! -d "$PROMTEXT_PATH" ] ; then
+	warn "promtext path is not available"
+	return
+    fi
+    PROMFILE="${PROMTEXT_PATH}/dupwrap-${NAME}.prom"
+    if [ -e "$PROMFILE" ] && grep -qE "dupwrap_${METRIC}.+${TASK}.+${NAME}" "$PROMFILE" ; then
+	sed -ie "s/dupwrap_${METRIC}.*${TASK}.*${NAME}.*/dupwrap_${METRIC}{task=\"${TASK}\", backup_name=\"$NAME\"} ${VALUE}/" "$PROMFILE"
+    else
+	{
+	    echo "# HELP dupwrap_${METRIC} dupwrap ${METRIC}" ;
+	    echo "# TYPE dupwrap_${METRIC} gauge" ;
+	    echo "dupwrap_${METRIC}{task=\"$TASK\", backup_name=\"$NAME\"} ${VALUE}"
+	} >> "$PROMFILE"
+    fi
 }
 
 # Wrap our execution of duplcitiy in order to set the
@@ -99,13 +114,16 @@ function exec_dup {
     RC=${PIPESTATUS[0]}
     FINISH=$(date +%s)
     local TIME=$((FINISH - START))
-    stat duration "$TIME"
     if [ "$RC" == "0" ] ; then
 	if [ -z "$QUIET" ] ; then
             log "${CMD} succesful after ${TIME}s"
 	fi
     else
         problems "UNABLE to ${CMD} after ${TIME}s"
+	if [ "$CMD" == "backup" ] ; then
+	    prom_write "status" "error" "$TIME"
+	    prom_write "time" "error" "$FINISH"
+	fi
     fi
 }
 
@@ -193,7 +211,12 @@ function backup() {
         cmd=(${cmd[@]} --exclude node_modules --exclude .git --exclude .svn --exclude .hg)
     fi
     cmd=(${cmd[@]} "/" "$BACKUP_TARGET")
+    START="$(date '+%s')"
     exec_dup "${cmd[@]}"
+    END="$(date '+%s')"
+    TIME="$((END - START))"
+    prom_write "status" "backup" "$TIME"
+    prom_write "time" "backup" "$END"
 }
 
 # Display a listing of files in the backup set
@@ -230,8 +253,13 @@ function restore() {
 # Removes non incremental and backup sets older than a
 # configured amount of time
 function prune() {
+    START="$(date '+%s')"
     exec_dup remove-all-inc-of-but-n-full "$KEEP_N_FULL" --force "$BACKUP_TARGET"
     exec_dup remove-older-than "$REMOVE_OLDER" --force "$BACKUP_TARGET"
+    END="$(date '+%s')"
+    TIME="$((END - START))"
+    prom_write "status" "prune" "$TIME"
+    prom_write "time" "prune" "$END"
 }
 
 function clean_backups() {

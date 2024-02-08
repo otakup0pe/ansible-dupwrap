@@ -11,5 +11,5 @@ dupwrap_encrypted_volume_size: 256m
 dupwrap_full_older: 30D
 dupwrap_backups: []
 dupwrap_cron_verbose: false
-dupwrap_statsd_port: 8125
-dupwrap_statsd_proto: "udp"
+dupwrap_metrics: false
+dupwrap_promtext_path: "/var/run/promnode/textfiles"
