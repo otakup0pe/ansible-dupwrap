@@ -70,7 +70,8 @@ function prom_write {
     if [ -e "$PROMFILE" ] && grep -qE "dupwrap_${METRIC}.+${TASK}.+${NAME}" "$PROMFILE" ; then
 	sed -ie "s/dupwrap_${METRIC}.*${TASK}.*${NAME}.*/dupwrap_${METRIC}{task=\"${TASK}\", backup_name=\"$NAME\"} ${VALUE}/" "$PROMFILE"
     else
-	if [ -e "$PROMFILE" ] && ! grep -qE "HELP dupwrap_${METRIC}" "$PROMFILE" ; then
+	if [ ! -e "$PROMFILE" ] || \
+	       ( [ -e "$PROMFILE" ] && ! grep -qE "HELP dupwrap_${METRIC}" "$PROMFILE" ) ; then
 	    {
 		echo "# HELP dupwrap_${METRIC} dupwrap ${METRIC}" ;
 		echo "# TYPE dupwrap_${METRIC} gauge" ;
