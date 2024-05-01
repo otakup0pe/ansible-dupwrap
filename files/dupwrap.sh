@@ -67,8 +67,8 @@ function prom_write {
 	return
     fi
     PROMFILE="${PROMTEXT_PATH}/dupwrap-${NAME}.prom"
-    if [ -e "$PROMFILE" ] && grep -qE "dupwrap_${METRIC}.+${TASK}.+${NAME}" "$PROMFILE" ; then
-	sed -ie "s/dupwrap_${METRIC}.*${TASK}.*${NAME}.*/dupwrap_${METRIC}{task=\"${TASK}\", backup_name=\"$NAME\"} ${VALUE}/" "$PROMFILE"
+    if grep -qE "dupwrap_${METRIC}.+${TASK}.+${NAME}" "$PROMFILE" ; then
+	sed -rie "s/dupwrap_${METRIC}.+${TASK}.+${NAME}.+/dupwrap_${METRIC}{task=\"${TASK}\", backup_name=\"$NAME\"} ${VALUE}/" "$PROMFILE"
     else
 	if [ ! -e "$PROMFILE" ] || \
 	       ( [ -e "$PROMFILE" ] && ! grep -qE "HELP dupwrap_${METRIC}" "$PROMFILE" ) ; then
