@@ -11,7 +11,7 @@ This will upload the GPG encrypted backup to a specified S3 bucket. The IAM user
 
 ## Mac USB Mode
 
-This will create/maintain a encrypted volume on external volumes. This does result in a double encryption but I don't really mind. This mode does _not_ yet support scheduled backups.
+This will create/maintain a encrypted volume on external volumes. This does result in a double encryption but I don't really mind. This mode does _not_ yet support scheduled backups. Has not really been tested in quite some time.
 
 ## Variables
 
