@@ -1,7 +1,8 @@
-SHELL_BITS=files/dupwrap.sh
+SHELL_BITS = $(wildcard files/*.sh)
 
 test:
-	for bit in $(SHELL_BITS) ; do \
-	    docker run -v "$(shell pwd)/$$bit:/tmp/FileToBeChecked" chrisdaish/shellcheck ; \
-	done
+	@$(foreach script,$(SHELL_BITS),docker run -t --rm \
+			-v "$(shell pwd)/$(script):/mnt/$(script)" \
+			"koalaman/shellcheck-alpine:stable" \
+			"shellcheck" "/mnt/$(script)" || exit;)
 	yamllint tasks/*.yml defaults/*.yml meta/*.yml
