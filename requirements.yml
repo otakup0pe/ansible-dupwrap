@@ -1,0 +1,11 @@
+---
+roles:
+  - name: ANXS.python
+    src: https://github.com/ANXS/python
+    version: master
+  - name: ANXS.build-essential
+    src: https://github.com/ANXS/build-essential
+    version: master
+  - name: nickhammond.logrotate
+    src: https://github.com/nickhammond/ansible-logrotate
+    version: master

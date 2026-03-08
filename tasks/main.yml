@@ -1,110 +1,125 @@
 ---
-- include_tasks: "deps.yml"
+- name: "Include dependency tasks"
+  ansible.builtin.include_tasks: "deps.yml"
 
-- name: "remove old config"
-  file:
-    path: "{{dupwrap_config_prefix}}/dupwrap.conf"
+- name: "Remove old config"
+  ansible.builtin.file:
+    path: "{{ dupwrap_config_prefix }}/dupwrap.conf"
     state: absent
 
-- name: "create dupwrap config directory"
-  file:
-    path: "{{dupwrap_config_prefix}}/dupwrap"
+- name: "Create dupwrap config directory"
+  ansible.builtin.file:
+    path: "{{ dupwrap_config_prefix }}/dupwrap"
     state: directory
-    mode: 0770
-    owner: "{{dupwrap_user}}"
-    group: "{{dupwrap_group}}"
+    mode: "0770"
+    owner: "{{ dupwrap_user }}"
+    group: "{{ dupwrap_group }}"
 
-- name: "generate configs"
-  template:
+- name: "Generate configs"
+  ansible.builtin.template:
     src: "dupwrap.conf.j2"
-    dest: "{{dupwrap_config_prefix}}/dupwrap/{{item.name}}.conf"
-    owner: "{{dupwrap_user}}"
-    group: "{{dupwrap_group}}"
-    mode: 0640
-  loop: "{{dupwrap_backups}}"
-  when: item.state|default("present") == "present"
-  no_log: "{{dupwrap_debug|default(True)}}"
+    dest: "{{ dupwrap_config_prefix }}/dupwrap/{{ item.name }}.conf"
+    owner: "{{ dupwrap_user }}"
+    group: "{{ dupwrap_group }}"
+    mode: "0640"
+  loop: "{{ dupwrap_backups }}"
+  when: item.state | default("present") == "present"
+  no_log: "{{ dupwrap_debug | default(True) }}"
 
-- name: "remove unwanted configs"
-  file:
-    path: "{{dupwrap_config_prefix}}/dupwrap/{{item.name}}.conf"
+- name: "Remove unwanted configs"
+  ansible.builtin.file:
+    path: "{{ dupwrap_config_prefix }}/dupwrap/{{ item.name }}.conf"
     state: absent
-  loop: "{{dupwrap_backups}}"
-  when: item.state|default("present") == "absent"
+  loop: "{{ dupwrap_backups }}"
+  when: item.state | default("present") == "absent"
 
-- name: "install wrapper"
-  copy:
+- name: "Install wrapper"
+  ansible.builtin.copy:
     src: "dupwrap.sh"
-    dest: "{{dupwrap_bin_prefix}}/dupwrap"
-    owner: "{{dupwrap_user}}"
-    group: "{{dupwrap_group}}"
-    mode: 0750
+    dest: "{{ dupwrap_bin_prefix }}/dupwrap"
+    owner: "{{ dupwrap_user }}"
+    group: "{{ dupwrap_group }}"
+    mode: "0750"
 
-- name: "remove old nightly cronjob"
-  file:
+- name: "Create share directory for uv project"
+  ansible.builtin.file:
+    path: "{{ dupwrap_share_prefix }}/dupwrap"
+    state: directory
+    owner: "{{ dupwrap_user }}"
+    group: "{{ dupwrap_group }}"
+    mode: "0750"
+
+- name: "Install pyproject.toml for uv"
+  ansible.builtin.copy:
+    src: "pyproject.toml"
+    dest: "{{ dupwrap_share_prefix }}/dupwrap/pyproject.toml"
+    owner: "{{ dupwrap_user }}"
+    group: "{{ dupwrap_group }}"
+    mode: "0640"
+
+- name: "Remove old nightly cronjob"
+  ansible.builtin.file:
     path: "/etc/cron.d/dupwrap_backup"
     state: "absent"
 
-- name: "set daily cronjob"
-  cron:
-    cron_file: "dupwrap-backup-{{item.name}}"
+- name: "Set daily cronjob"
+  ansible.builtin.cron:
+    cron_file: "dupwrap-backup-{{ item.name }}"
     name: "YOLO nightly backup"
     special_time: "daily"
     job: >
-      bash -c '{{dupwrap_bin_prefix}}/dupwrap backup -p {{ item.name }}
+      bash -c '{{ dupwrap_bin_prefix }}/dupwrap backup -p {{ item.name }}
       {% if dupwrap_cron_verbose -%}
-      -v &>> {{dupwrap_log_prefix}}/dupwrap.log
+      -v &>> {{ dupwrap_log_prefix }}/dupwrap.log
       {% else %}
-      -q
-      {%- endif -%}'
-    user: "{{dupwrap_user}}"
-    state: "{% if item.cron|default(dupwrap_cron) %}present\
+      -q{%- endif -%}'
+    user: "{{ dupwrap_user }}"
+    state: "{% if item.cron | default(dupwrap_cron) %}present\
     {% else %}absent{% endif %}"
-  loop: "{{dupwrap_backups}}"
+  loop: "{{ dupwrap_backups }}"
 
-- name: "set cron backup prune"
-  cron:
-    cron_file: "dupwrap-prune-{{item.name}}"
-    name: "yolo prune backups"
+- name: "Set cron backup prune"
+  ansible.builtin.cron:
+    cron_file: "dupwrap-prune-{{ item.name }}"
+    name: "Prune old backups"
     hour: "2"
     weekday: "0"
     job: >
-      bash -c '{{dupwrap_bin_prefix}}/dupwrap prune -p {{item.name}}
+      bash -c '{{ dupwrap_bin_prefix }}/dupwrap prune -p {{ item.name }}
       {% if dupwrap_cron_verbose -%}
-      -v &>> {{dupwrap_log_prefix}}/dupwrap.log
+      -v &>> {{ dupwrap_log_prefix }}/dupwrap.log
       {% else %}
-      -q
-      {%- endif -%}'
-    user: "{{dupwrap_user}}"
-    state: "{% if item.cron|default(dupwrap_cron) %}present\
+      -q{%- endif -%}'
+    user: "{{ dupwrap_user }}"
+    state: "{% if item.cron | default(dupwrap_cron) %}present\
     {% else %}absent{% endif %}"
-  loop: "{{dupwrap_backups}}"
+  loop: "{{ dupwrap_backups }}"
 
+- name: "Install helper scripts"
+  ansible.builtin.copy:
+    src: "{{ item }}_helper.sh"
+    dest: "{{ dupwrap_bin_prefix }}/dupwrap-{{ item }}-helper"
+    owner: "{{ dupwrap_user }}"
+    group: "{{ dupwrap_group }}"
+    mode: "0770"
+  loop: "{{ dupwrap_helpers }}"
 
-- name: "install some helpers"
-  copy:
-    src: "{{item}}_helper.sh"
-    dest: "{{dupwrap_bin_prefix}}/dupwrap-{{item}}-helper"
-    owner: "{{dupwrap_user}}"
-    group: "{{dupwrap_group}}"
-    mode: 0770
-  loop: "{{dupwrap_helpers}}"
-
-- include_role:
+- name: "Configure logrotate for backup logs"
+  ansible.builtin.include_role:
     name: nickhammond.logrotate
   vars:
     logrotate_scripts:
-      - name: "dupwrap-{{item.name}}"
-        path: "{{dupwrap_log_prefix}}/dupwrap-{{item.name}}.log"
+      - name: "dupwrap-{{ item.name }}"
+        path: "{{ dupwrap_log_prefix }}/dupwrap-{{ item.name }}.log"
         options:
           - weekly
           - missingok
           - rotate 4
           - compress
-          - "create 0640 {{dupwrap_user}} {{dupwrap_group}}"
-  loop: "{{dupwrap_backups}}"
+          - "create 0640 {{ dupwrap_user }} {{ dupwrap_group }}"
+  loop: "{{ dupwrap_backups }}"
 
-- name: "remove old log file, if present"
-  file:
-    path: "{{dupwrap_log_prefix}}/dupwrap.log"
+- name: "Remove old log file if present"
+  ansible.builtin.file:
+    path: "{{ dupwrap_log_prefix }}/dupwrap.log"
     state: "absent"

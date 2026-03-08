@@ -1,13 +1,27 @@
 ---
 galaxy_info:
   author: Jonathan Freedman
+  description: Ansible role for managing duplicity backups via the dupwrap wrapper script
   license: MIT
+  role_name: dupwrap
+  namespace: otakup0pe
   galaxy_tags:
     - backup
     - cloud
     - osx
-  min_ansible_version: 2.7
+  min_ansible_version: "2.11"
   platforms:
     - name: Ubuntu
       versions:
-        - all
+        - focal
+        - noble
+    - name: Debian
+      versions:
+        - bullseye
+        - bookworm
+dependencies:
+  - role: ANXS.python
+  - role: ANXS.build-essential
+    when:
+      - ansible_os_family == 'Debian'
+      - ansible_distribution_release == 'focal'

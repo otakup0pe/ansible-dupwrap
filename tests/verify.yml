@@ -1,0 +1,84 @@
+---
+- name: Verify dupwrap Role Installation
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    dupwrap_bin_prefix: /usr/local/bin
+    dupwrap_share_prefix: /usr/local/share
+  tasks:
+
+    - name: Check dupwrap script exists
+      ansible.builtin.stat:
+        path: "{{ dupwrap_bin_prefix }}/dupwrap"
+      register: dupwrap_bin
+
+    - name: Verify dupwrap script is installed
+      ansible.builtin.assert:
+        that:
+          - dupwrap_bin.stat.exists
+          - dupwrap_bin.stat.executable
+        fail_msg: "dupwrap script not found or not executable"
+        success_msg: "dupwrap script installed at {{ dupwrap_bin_prefix }}/dupwrap"
+
+    - name: Check pyproject.toml exists
+      ansible.builtin.stat:
+        path: "{{ dupwrap_share_prefix }}/dupwrap/pyproject.toml"
+      register: pyproject
+
+    - name: Verify pyproject.toml is deployed
+      ansible.builtin.assert:
+        that:
+          - pyproject.stat.exists
+        fail_msg: "pyproject.toml not found at {{ dupwrap_share_prefix }}/dupwrap/"
+        success_msg: "pyproject.toml deployed correctly"
+
+    - name: Check uv is available
+      ansible.builtin.command: uv --version
+      register: uv_check
+      changed_when: false
+
+    - name: Verify uv works
+      ansible.builtin.assert:
+        that:
+          - uv_check.rc == 0
+          - "'uv' in uv_check.stdout"
+        fail_msg: "uv not available: {{ uv_check.stderr | default('') }}"
+        success_msg: "uv available: {{ uv_check.stdout }}"
+
+    - name: Test dupwrap can resolve duplicity via uv
+      ansible.builtin.command: uv run --project {{ dupwrap_share_prefix }}/dupwrap duplicity --version
+      register: duplicity_check
+      changed_when: false
+      failed_when: false
+
+    - name: Verify duplicity resolves
+      ansible.builtin.assert:
+        that:
+          - duplicity_check.rc == 0
+        fail_msg: "duplicity failed via uv run: {{ duplicity_check.stderr | default('') }}"
+        success_msg: "duplicity resolves via uv: {{ duplicity_check.stdout }}"
+
+    - name: Check swap helper exists
+      ansible.builtin.stat:
+        path: "{{ dupwrap_bin_prefix }}/dupwrap-swap-helper"
+      register: swap_helper
+
+    - name: Verify swap helper is installed
+      ansible.builtin.assert:
+        that:
+          - swap_helper.stat.exists
+          - swap_helper.stat.executable
+        fail_msg: "dupwrap-swap-helper not found or not executable"
+        success_msg: "dupwrap-swap-helper installed"
+
+    - name: Display verification summary
+      ansible.builtin.debug:
+        msg: |
+          dupwrap Role Verification Complete!
+
+          dupwrap: {{ dupwrap_bin.stat.exists | ternary('installed', 'MISSING') }}
+          pyproject.toml: {{ pyproject.stat.exists | ternary('deployed', 'MISSING') }}
+          uv: {{ uv_check.stdout }}
+          duplicity: {{ duplicity_check.stdout | default('FAILED') }}
+          swap-helper: {{ swap_helper.stat.exists | ternary('installed', 'MISSING') }}

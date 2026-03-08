@@ -1,14 +1,17 @@
 ---
 dupwrap_debian_pkgs:
-  - "duplicity"
-  - "s3cmd"
+  - "gnupg"
+  - "librsync2"
   - "lftp"
-dupwrap_debian_pips:
-  - "boto"
+
+# todo remove this after nobody cares about focal
+dupwrap_focal_build_pkgs:
+  - "libxml2-dev"
+  - "libxslt1-dev"
+  - "python3-dev"
 dupwrap_darwin_brews:
-  - "s3cmd"
-  - "ncftp"
-dupwrap_darwin_pips:
-  - "boto"
+  - "gnupg"
+  - "librsync"
+  - "lftp"
 dupwrap_helpers:
   - "swap"

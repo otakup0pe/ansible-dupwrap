@@ -81,7 +81,7 @@ function prom_write {
     fi
 }
 
-# Wrap our execution of duplcitiy in order to set the
+# Wrap our execution of duplicity in order to set the
 # archive directory and also redirect output to a tee
 # when running non-interactively
 function exec_dup {
@@ -90,7 +90,17 @@ function exec_dup {
     local START
     local FINISH
     declare -a e_cmd
-    e_cmd=(duplicity)
+
+    # Use uv to run duplicity with managed Python dependencies
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SHARE_DIR="$(dirname "${SCRIPT_DIR}")/share/dupwrap"
+    if [ -f "${SHARE_DIR}/pyproject.toml" ] ; then
+        e_cmd=(uv run --project "${SHARE_DIR}" duplicity)
+    else
+        # Fallback to system duplicity if pyproject.toml not found
+        warn "pyproject.toml not found at ${SHARE_DIR}, falling back to system duplicity"
+        e_cmd=(duplicity)
+    fi
     if [ "$CMD" != "backup" ] ; then
         e_cmd=(${e_cmd[@]} $CMD)
     fi
@@ -234,9 +244,9 @@ function restore_file() {
     local DEST="$2"
     cmd=(restore)
     if [ $# == 2 ]; then
-        cmd=(${cmd[@]} --file-to-restore "$FILE" "$BACKUP_TARGET" "$DEST")
+        cmd=(${cmd[@]} --path-to-restore "$FILE" "$BACKUP_TARGET" "$DEST")
     else
-        cmd=(${cmd[@]} --file-to-restore "$FILE" --time "$2" "$BACKUP_TARGET" "$3")
+        cmd=(${cmd[@]} --path-to-restore "$FILE" --time "$2" "$BACKUP_TARGET" "$3")
     fi
     exec_dup "${cmd[*]}"
 }

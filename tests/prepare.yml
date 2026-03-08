@@ -1,0 +1,30 @@
+---
+- name: Prepare Test Environment
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    python_uv_install: true
+  pre_tasks:
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 86400
+      when: ansible_os_family == "Debian"
+
+    - name: Install essential packages
+      ansible.builtin.apt:
+        name:
+          - curl
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Re-gather facts after lsb-release install
+      ansible.builtin.setup:
+
+  roles:
+    - role: ANXS.python

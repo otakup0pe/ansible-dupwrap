@@ -1,0 +1,20 @@
+[project]
+name = "dupwrap"
+version = "0.1.0"
+description = "Duplicity wrapper dependencies"
+requires-python = ">=3.8"
+dependencies = [
+    "duplicity",
+    "fasteners",
+    "boto3",
+    "paramiko"
+]
+
+[tool.uv]
+# We only use S3/SSH/FTP backends - none of these are needed
+override-dependencies = [
+    "pyrax ; python_version < '0'",
+    "lxml ; python_version < '0'",
+    "gdata-python3 ; python_version < '0'",
+    "jottalib ; python_version < '0'"
+]

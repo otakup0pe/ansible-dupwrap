@@ -3,6 +3,7 @@ dupwrap_user: root
 dupwrap_group: root
 dupwrap_config_prefix: /etc
 dupwrap_bin_prefix: /usr/local/bin
+dupwrap_share_prefix: /usr/local/share
 dupwrap_log_prefix: /var/log
 dupwrap_cron: false
 dupwrap_n_full: 3

@@ -1,0 +1,9 @@
+---
+- name: Test dupwrap Role
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    dupwrap_backups: []
+  roles:
+    - role: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"

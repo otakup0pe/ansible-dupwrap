@@ -1,9 +1,15 @@
-![Maintenance](https://img.shields.io/maintenance/yes/2025.svg)
+![CI](https://github.com/otakup0pe/ansible-dupwrap/actions/workflows/ci.yml/badge.svg)
+![Maintenance](https://img.shields.io/maintenance/yes/2026.svg)
 
 `dup`licity `wrap`per
 --------------------
 
 This Ansible role installs a simple wrapper around the [duplicity](http://duplicity.nongnu.org/) backup tool. It has two modes of operation - backing up to Amazon S3, or an encrypted Mac disk image on an external Volume. The `dupwrap` tool supports multiple backup profiles on a single host. It may be run as either the `root` user to backup servers, or as another user to backup workstations.
+
+## Requirements
+
+- [uv](https://docs.astral.sh/uv/) must be installed on the target host. This role uses `uv run` to manage duplicity and its Python dependencies via `pyproject.toml`, eliminating the need for system-level pip or virtualenv management.
+- The `ANXS.python` role (or equivalent) should be applied before this role to ensure Python and uv are available.
 
 ## S3 Mode
 
@@ -74,6 +80,29 @@ On macOS, there are some additional actions available.
 ## Swap Helper
 
 The swap helper script (`dupwrap-swap-helper`) is meant to be used with the `pre_script` and `post_script` job variables. It is invoked with a single argument which is either `pre` or `post`.
+
+## Testing
+
+This role uses [Molecule](https://molecule.readthedocs.io/) with Docker for integration testing across multiple distributions.
+
+```bash
+# Install dependencies
+make .venv
+
+# Run linters (yamllint, ansible-lint)
+make lint
+
+# Run full test suite (all distros)
+make test
+
+# Test a specific distro
+make test-ubuntu2204
+make test-ubuntu2404
+make test-debian12
+make test-debian13
+```
+
+CI runs automatically on push and pull requests via GitHub Actions.
 
 # License
 
