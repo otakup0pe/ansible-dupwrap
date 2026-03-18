@@ -102,27 +102,27 @@ function exec_dup {
         e_cmd=(duplicity)
     fi
     if [ "$CMD" != "backup" ] ; then
-        e_cmd=(${e_cmd[@]} $CMD)
+        e_cmd+=("$CMD")
     fi
-    e_cmd=(${e_cmd[@]} --name "$NAME")
+    e_cmd+=(--name "$NAME")
     log_level="notice"
     if [ -n "$VERBOSE" ] ; then
 	log_level="debug"
     elif [ -n "$QUIET" ] ; then
 	log_level="warning"
     fi
-    e_cmd=(${e_cmd[@]} --verbosity "$log_level")
+    e_cmd+=(--verbosity "$log_level")
     if [ -n "$ARCHIVE_DIR" ] ; then
-        e_cmd=(${e_cmd[@]} --archive-dir "$ARCHIVE_DIR")
+        e_cmd+=(--archive-dir "$ARCHIVE_DIR")
 	export TMPDIR="${ARCHIVE_DIR}"
     fi
-    e_cmd=(${e_cmd[@]} ${A_CMD[@]:1})
+    e_cmd+=("${A_CMD[@]:1}")
     dbg "executing ${e_cmd[*]}"
     START=$(date +%s)
     if [ -n "$QUIET" ] ; then
-	${e_cmd[*]} >> "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log"
+	"${e_cmd[@]}" >> "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log"
     else
-	${e_cmd[*]} | tee -a "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log"
+	"${e_cmd[@]}" | tee -a "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log"
     fi
     RC=${PIPESTATUS[0]}
     FINISH=$(date +%s)
@@ -132,11 +132,11 @@ function exec_dup {
             log "${CMD} succesful after ${TIME}s"
 	fi
     else
-        problems "UNABLE to ${CMD} after ${TIME}s"
 	if [ "$CMD" == "backup" ] ; then
 	    prom_write "status" "error" "$TIME"
 	    prom_write "time" "error" "$FINISH"
 	fi
+        problems "UNABLE to ${CMD} after ${TIME}s"
     fi
 }
 
@@ -214,16 +214,16 @@ function backup() {
     set -f
     cmd=(backup --full-if-older-than "$FULL_IF_OLDER")
     if [ -n "$WANDERING" ] ; then
-        cmd=(${cmd[@]} --allow-source-mismatch)
+        cmd+=(--allow-source-mismatch)
     fi
     for CDIR in $SOURCE ; do
-        cmd=(${cmd[@]} --include "$CDIR")
+        cmd+=(--include "$CDIR")
     done
-    cmd=(${cmd[@]} --exclude '**')
+    cmd+=(--exclude '**')
     if [ "$DROP_JUNK" == "yes" ] ; then
-        cmd=(${cmd[@]} --exclude node_modules --exclude .git --exclude .svn --exclude .hg)
+        cmd+=(--exclude node_modules --exclude .git --exclude .svn --exclude .hg)
     fi
-    cmd=(${cmd[@]} "/" "$BACKUP_TARGET")
+    cmd+=("/" "$BACKUP_TARGET")
     START="$(date '+%s')"
     exec_dup "${cmd[@]}"
     END="$(date '+%s')"
@@ -244,9 +244,9 @@ function restore_file() {
     local DEST="$2"
     cmd=(restore)
     if [ $# == 2 ]; then
-        cmd=(${cmd[@]} --path-to-restore "$FILE" "$BACKUP_TARGET" "$DEST")
+        cmd+=(--path-to-restore "$FILE" "$BACKUP_TARGET" "$DEST")
     else
-        cmd=(${cmd[@]} --path-to-restore "$FILE" --time "$2" "$BACKUP_TARGET" "$3")
+        cmd+=(--path-to-restore "$FILE" --time "$2" "$BACKUP_TARGET" "$3")
     fi
     exec_dup "${cmd[*]}"
 }
@@ -256,9 +256,9 @@ function restore_file() {
 function restore() {
     cmd=(restore)
     if [ $# == 1 ] ; then
-        cmd=(${cmd[@]} --force "$BACKUP_TARGET" "$1")
+        cmd+=(--force "$BACKUP_TARGET" "$1")
     else
-        cmd=(${cmd[@]} --force --time "$1" "$BACKUP_TARGET" "$2")
+        cmd+=(--force --time "$1" "$BACKUP_TARGET" "$2")
     fi
     exec_dup "${cmd[*]}"
 }

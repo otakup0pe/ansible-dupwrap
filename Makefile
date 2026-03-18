@@ -1,4 +1,6 @@
-.PHONY: lint test test-ubuntu2204 test-ubuntu2404 test-debian12 test-debian13 test-all clean distclean
+SHELLCHECK_SCRIPTS = files/dupwrap.sh files/swap_helper.sh
+
+.PHONY: lint shellcheck test test-ubuntu2204 test-ubuntu2404 test-debian12 test-debian13 test-all clean distclean
 
 VENV := .venv
 BIN := $(VENV)/bin
@@ -10,7 +12,20 @@ $(VENV): requirements-dev.txt
 	$(BIN)/pip install -r requirements-dev.txt
 	@touch $(VENV)
 
-lint: $(VENV)
+shellcheck:
+	@had_error=0; \
+	for script in $(SHELLCHECK_SCRIPTS); do \
+		echo "(shell) Checking $$script"; \
+		docker run -t --rm \
+			-v "$(shell pwd)/$$script:/mnt/$$script" \
+			"koalaman/shellcheck-alpine:stable" \
+			"shellcheck" -S warning "/mnt/$$script" || had_error=1; \
+	done; \
+	if [ $$had_error -eq 1 ]; then \
+		exit 1; \
+	fi
+
+lint: $(VENV) shellcheck
 	$(BIN)/yamllint -c .yamllint defaults tasks vars meta
 	$(BIN)/ansible-lint -c .ansible-lint defaults tasks vars meta
 
