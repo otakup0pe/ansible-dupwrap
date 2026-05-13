@@ -1,6 +1,6 @@
 SHELLCHECK_SCRIPTS = files/dupwrap.sh files/swap_helper.sh
 
-.PHONY: lint shellcheck test test-ubuntu2204 test-ubuntu2404 test-debian12 test-debian13 test-all clean distclean
+.PHONY: lint shellcheck test test-ubuntu2204 test-ubuntu2404 test-debian12 test-debian13 test-all test-e2e-local test-e2e-s3 clean distclean
 
 VENV := .venv
 BIN := $(VENV)/bin
@@ -29,7 +29,7 @@ lint: $(VENV) shellcheck
 	$(BIN)/yamllint -c .yamllint defaults tasks vars meta
 	$(BIN)/ansible-lint -c .ansible-lint defaults tasks vars meta
 
-test: lint test-all
+test: lint test-all test-e2e-local
 
 test-ubuntu2204: $(VENV)
 	MOLECULE_DISTRO=ubuntu2204 $(BIN)/molecule test
@@ -44,6 +44,12 @@ test-debian13: $(VENV)
 	MOLECULE_DISTRO=debian13 $(BIN)/molecule test
 
 test-all: test-ubuntu2204 test-ubuntu2404 test-debian12 test-debian13
+
+test-e2e-local: $(VENV)
+	MOLECULE_DISTRO=ubuntu2404 $(BIN)/molecule test -s e2e-local
+
+test-e2e-s3: $(VENV)
+	bash tests/run-e2e-s3.sh
 
 clean:
 	$(BIN)/molecule destroy 2>/dev/null || true

@@ -1,23 +1,23 @@
-![CI](https://github.com/otakup0pe/ansible-dupwrap/actions/workflows/ci.yml/badge.svg)
-![Maintenance](https://img.shields.io/maintenance/yes/2026.svg)
+[![CI Status](https://img.shields.io/github/actions/workflow/status/otakup0pe/ansible-dupwrap/ci.yml)](https://github.com/otakup0pe/ansible-dupwrap/actions/workflows/ci.yml)
+[![Maintenance](https://img.shields.io/maintenance/yes/2026.svg)](https://github.com/otakup0pe/ansible-dupwrap)
+[![License](https://img.shields.io/github/license/otakup0pe/ansible-dupwrap)](https://github.com/otakup0pe/ansible-dupwrap/blob/master/LICENSE)
 
 `dup`licity `wrap`per
 --------------------
 
-This Ansible role installs a simple wrapper around the [duplicity](http://duplicity.nongnu.org/) backup tool. It has two modes of operation - backing up to Amazon S3, or an encrypted Mac disk image on an external Volume. The `dupwrap` tool supports multiple backup profiles on a single host. It may be run as either the `root` user to backup servers, or as another user to backup workstations.
+This Ansible role installs a simple wrapper around the [duplicity](http://duplicity.nongnu.org/) backup tool. It supports backing up to Amazon S3, local filesystem paths, or FTP servers. The `dupwrap` tool supports multiple backup profiles on a single host, backup and restore operations, and may be run as either the `root` user to backup servers, or as another user to backup workstations.
 
 ## Requirements
 
-- [uv](https://docs.astral.sh/uv/) must be installed on the target host. This role uses `uv run` to manage duplicity and its Python dependencies via `pyproject.toml`, eliminating the need for system-level pip or virtualenv management.
-- The `ANXS.python` role (or equivalent) should be applied before this role to ensure Python and uv are available.
+[uv](https://docs.astral.sh/uv/) must be installed on the target host. This role uses `uv run` to manage duplicity and its Python dependencies via `pyproject.toml`, eliminating the need for system-level pip or virtualenv management. The author recommends the [ANXS.python](https://github.com/anxs/python) role, but you may use whatever your heart desires to ensure python and uv are available.
 
 ## S3 Mode
 
 This will upload the GPG encrypted backup to a specified S3 bucket. The IAM user associated with the provided API keys requires both read/write permissions.
 
-## Mac USB Mode
+## Local Filesystem Mode
 
-This will create/maintain a encrypted volume on external volumes. This does result in a double encryption but I don't really mind. This mode does _not_ yet support scheduled backups. Has not really been tested in quite some time.
+Backs up to a local filesystem path (e.g. USB drive, NFS mount, secondary disk). Uses duplicity's `file://` backend. No credentials required, making it suitable for CI testing and offline/DR scenarios.
 
 ## Variables
 
@@ -40,26 +40,23 @@ Multiple backup profiles may be defined. They are all stored in a a directory na
 * `aws_secret_key` (`dupwrap_aws_secret_key`) is the AWS Secret Access Key, needed for S3 backups
 * `bucket` (`dupwrap_bucket`) is the S3 URI to use, needed for S3 backups
 
-You must pass these instance variables if backing up to Mac/USB
+For local filesystem backups, set destination to `local` and provide:
 
-* `dupwrap_unencrypted_volume` is the name of the mounted external volume to use
-* `dupwrap_encrypted_volume` is the name of the encrypted volume to make
-* `dupwrap_encrypted_volume_size` is the size of the volume, and defaults to `256m`
+* `local_path` is the filesystem path to store backups in
 
 ## `dupwrap` script
 
-This script is the interface around `duplicity`. It is also what gets called by `cron`, if using that. All mac/usb interactions will ask for a password.
+This script is the interface around `duplicity`. It is also what gets called by `cron`, if using that.
 
 ### Options
 
 These options change the default behaviour. Note that some actions will require a profile specified.
 
-* `-d` when specified on a mac backup will cause it to leave things mounted when done backing up.
 * `-v` spits out a bunch of debugging information
 * `-f` skips confirmation when removing things for ever
 * `-c` specifies the directory where configuration files are stored. This defaults to whatever `dupwrap_config_prefix` is set to
 * `-p` specifies a backup profile.
-* `-t` Specifieds the time to restore a file from. I have no idea why this is an option and not an action argument. Probably because I'm terrible at computers.
+* `-t` specifies the time to restore from (duplicity time format)
 
 ### Actions
 
@@ -67,15 +64,48 @@ These options change the default behaviour. Note that some actions will require 
 * `list` lists everything in the most recent backup
 * `restore_file` will restore a specific file to the given location
   * `restore_file <file> <dest>` to restore most recent
+* `restore` will restore an entire backup set to a destination
 * `status` basic information on the backup set
 * `prune` will remove old backups. If no profile is specified then every found backup will be purged.
+* `clean` will clean up failed backup sets
 
-On macOS, there are some additional actions available.
+### Ansible Restore Tasks
 
-* `init` will create the encrypted disk image
-* `purge` will remove the encrypted disk image
-* `mount` will mount the encrypted disk image
-* `unmount` will unmount the encrypted disk image
+The role includes `tasks/restore.yml` for ansible-driven restores:
+
+```yaml
+- include_role:
+    name: otakup0pe.dupwrap
+    tasks_from: restore
+  vars:
+    dupwrap_restore: true
+    dupwrap_restore_profile: "general"
+    # dupwrap_restore_time: "2026-04-20"  # optional point-in-time
+    # dupwrap_restore_directories:        # optional subset of profile dirs
+    #   - /mnt/things
+```
+
+Restore may be human-initiated (gated behind `dupwrap_restore: false`) or semi-automatic in a passive mode. This allows for humans to manually restore things, and for backups to be restored on first-boot when they are missing.
+
+### Passive Auto-Restore Mode
+
+Enable by setting in host or group vars:
+
+```yaml
+dupwrap_restore_if_missing: true
+dupwrap_restore_profile: "general"
+```
+
+When `dupwrap_restore_if_missing` is `true`, the role's normal converge (`tasks/main.yml`) includes `tasks/restore.yml` at the end. For each directory in the profile:
+
+- **Missing directory**: restored from backup.
+- **Empty directory** (mount point exists but contains no files, including hidden files): restored from backup. This is the key case for post-mount storage hosts.
+- **Directory with content**: skipped. Re-converge after a successful restore is a no-op, and populated directories are never clobbered.
+- **Directory not found in archive**: warned, not failed.
+
+Empty-directory detection uses `ansible.builtin.find` with `file_type: any` and `hidden: true`, so dot-files are counted as content.
+
+This mode is distinct from operator-initiated `dupwrap_restore`, which remains explicit (`include_role` with `tasks_from: restore`). Both variables gate the same restore tasks -- the assert requires at least one of them to be true.
 
 ## Swap Helper
 
@@ -103,6 +133,11 @@ make test-debian13
 ```
 
 CI runs automatically on push and pull requests via GitHub Actions.
+
+## Note on AI Usage
+
+This project has been developed with AI assistance. Contributions making use of AI generated content are welcome, however they _must_ be human reviewed prior to submission as pull requests, or issues. All contributors must be able to fully explain and defend any AI generated code, documentation, issues, or tests they submit. Contributions making use of AI must have this explicitly declared in the pull request or issue. This also applies to utilization of AI for reviewing of pull requests.
+
 
 # License
 

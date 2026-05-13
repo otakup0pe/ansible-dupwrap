@@ -20,9 +20,3 @@
   when:
     - ansible_os_family == 'Debian'
     - ansible_distribution_release == 'focal'
-
-- name: "Install dependency packages for Mac"
-  community.general.homebrew:
-    pkg: "{{ dupwrap_darwin_brews }}"
-    state: present
-  when: ansible_os_family == 'Darwin'

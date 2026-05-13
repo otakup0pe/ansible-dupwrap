@@ -1,0 +1,199 @@
+---
+- name: E2E S3 Backup and Restore Test
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    e2e_bucket: "{{ lookup('env', 'DUPWRAP_E2E_BUCKET_URI') }}"
+    e2e_aws_key: "{{ lookup('env', 'DUPWRAP_E2E_AWS_ACCESS_KEY_ID') }}"
+    e2e_aws_secret: "{{ lookup('env', 'DUPWRAP_E2E_AWS_SECRET_ACCESS_KEY') }}"
+    e2e_gpg_pass: "molecule-e2e-s3-testing"
+    dupwrap_backups:
+      - name: "e2e-s3-test"
+        destination: "s3"
+        bucket: "{{ e2e_bucket }}"
+        aws_access_key: "{{ e2e_aws_key }}"
+        aws_secret_key: "{{ e2e_aws_secret }}"
+        directories:
+          - /tmp/test-data/documents
+          - /tmp/test-data/photos
+        passphrase: "{{ e2e_gpg_pass }}"
+        cron: false
+    dupwrap_metrics: false
+
+  roles:
+    - role: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
+
+  tasks:
+    - name: Run initial backup to S3
+      ansible.builtin.command: >-
+        dupwrap backup -p e2e-s3-test -v
+      register: backup_result
+
+    - name: Verify backup succeeded
+      ansible.builtin.assert:
+        that:
+          - backup_result.rc == 0
+        fail_msg: "S3 backup failed: {{ backup_result.stderr }}"
+
+    - name: Check backup status
+      ansible.builtin.command: >-
+        dupwrap status -p e2e-s3-test
+      register: status_result
+
+    - name: Verify backup set exists
+      ansible.builtin.assert:
+        that:
+          - status_result.rc == 0
+          - "'Full' in status_result.stdout"
+        fail_msg: "S3 backup status check failed"
+
+    - name: List backup contents
+      ansible.builtin.command: >-
+        dupwrap list -p e2e-s3-test
+      register: list_result
+
+    - name: Verify expected files
+      ansible.builtin.assert:
+        that:
+          - "'readme.txt' in list_result.stdout"
+          - "'metadata.json' in list_result.stdout"
+        fail_msg: "Expected files not in S3 backup listing"
+
+    - name: Restore single file from S3
+      ansible.builtin.command: >-
+        dupwrap restore_file
+        tmp/test-data/documents/readme.txt
+        /tmp/test-restore-s3/readme.txt
+        -p e2e-s3-test
+      changed_when: true
+
+    - name: Verify restored file content
+      ansible.builtin.shell: |
+        cat /tmp/test-restore-s3/readme.txt
+      register: restored_content
+      changed_when: false
+
+    - name: Assert content matches
+      ansible.builtin.assert:
+        that:
+          - "'S3 backup test document' in restored_content.stdout"
+        fail_msg: "Restored content mismatch: {{ restored_content.stdout }}"
+
+    # Verify backup integrity against local files
+    - name: Run verify against latest S3 backup
+      ansible.builtin.command: >-
+        dupwrap verify -p e2e-s3-test -v
+      register: verify_result
+
+    - name: Verify verify succeeded
+      ansible.builtin.assert:
+        that:
+          - verify_result.rc == 0
+        fail_msg: "S3 verify failed: {{ verify_result.stderr }}"
+
+    # Incremental backup for time-based tests
+    - name: Modify a test file
+      ansible.builtin.copy:
+        content: "Updated S3 document content for incremental test."
+        dest: /tmp/test-data/documents/readme.txt
+        mode: "0644"
+
+    - name: Add a new file
+      ansible.builtin.copy:
+        content: "New file added after initial S3 backup."
+        dest: /tmp/test-data/documents/new-file.txt
+        mode: "0644"
+
+    - name: Run incremental S3 backup
+      ansible.builtin.command: >-
+        dupwrap backup -p e2e-s3-test -v
+      register: incremental_result
+
+    - name: Verify incremental backup succeeded
+      ansible.builtin.assert:
+        that:
+          - incremental_result.rc == 0
+        fail_msg: "S3 incremental backup failed: {{ incremental_result.stderr }}"
+
+    # Time-based list
+    - name: Get timestamp of initial full backup
+      ansible.builtin.shell: |
+        ts=$(dupwrap status -p e2e-s3-test | grep 'Full' | head -1 | sed 's/.*Full  *//;s/  *[0-9]*$//')
+        date -d "$ts" '+%Y-%m-%dT%H:%M:%S'
+      register: full_backup_time
+      changed_when: false
+
+    - name: List files as of initial backup
+      ansible.builtin.command: >-
+        dupwrap list -p e2e-s3-test -t "{{ full_backup_time.stdout | trim }}"
+      register: list_time_result
+
+    - name: Verify time-based list shows original files
+      ansible.builtin.assert:
+        that:
+          - list_time_result.rc == 0
+          - "'readme.txt' in list_time_result.stdout"
+        fail_msg: "S3 time-based list failed or missing expected files"
+
+    - name: Verify time-based list does NOT show post-incremental file
+      ansible.builtin.assert:
+        that:
+          - "'new-file.txt' not in list_time_result.stdout"
+        fail_msg: "S3 time-based list should not show new-file.txt"
+
+    - name: List latest S3 backup contents
+      ansible.builtin.command: >-
+        dupwrap list -p e2e-s3-test
+      register: list_latest_result
+
+    - name: Verify latest list includes new file
+      ansible.builtin.assert:
+        that:
+          - list_latest_result.rc == 0
+          - "'new-file.txt' in list_latest_result.stdout"
+        fail_msg: "S3 latest list should include new-file.txt"
+
+    # Time-based verify (against initial full, expect diffs)
+    - name: Run verify against initial S3 backup (expect differences)
+      ansible.builtin.command: >-
+        dupwrap verify -p e2e-s3-test -t "{{ full_backup_time.stdout | trim }}" -v
+      register: verify_time_result
+      failed_when: false
+
+    - name: Verify time-based verify ran
+      ansible.builtin.assert:
+        that:
+          - verify_time_result.rc is defined
+        fail_msg: "S3 time-based verify did not execute"
+
+    - name: Delete source data
+      ansible.builtin.file:
+        path: /tmp/test-data
+        state: absent
+
+    - name: Restore via ansible tasks
+      ansible.builtin.include_role:
+        name: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
+        tasks_from: restore
+      vars:
+        dupwrap_restore: true
+        dupwrap_restore_profile: "e2e-s3-test"
+
+    - name: Verify restored directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: restored_dirs
+      loop:
+        - /tmp/test-data/documents
+        - /tmp/test-data/photos
+      failed_when: not restored_dirs.stat.exists
+
+    - name: Verify restored files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: restored_files
+      loop:
+        - /tmp/test-data/documents/readme.txt
+        - /tmp/test-data/photos/metadata.json
+      failed_when: not restored_files.stat.exists

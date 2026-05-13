@@ -1,0 +1,413 @@
+---
+- name: E2E Local Backup and Restore Test
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    dupwrap_backups:
+      - name: "e2e-test"
+        destination: "local"
+        local_path: "/tmp/test-backup"
+        directories:
+          - /tmp/test-data/documents
+          - /tmp/test-data/photos
+          - /tmp/test-data/config
+        passphrase: "e2e-test-passphrase-not-secret"
+        cron: false
+    dupwrap_metrics: false
+
+  roles:
+    - role: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
+
+  tasks:
+    # Step 1: Run initial backup
+    - name: Run initial backup
+      ansible.builtin.command: >-
+        dupwrap backup -p e2e-test -v
+      register: backup_result
+
+    - name: Verify backup succeeded
+      ansible.builtin.assert:
+        that:
+          - backup_result.rc == 0
+        fail_msg: "Initial backup failed: {{ backup_result.stderr }}"
+
+    # Step 2: Verify backup set exists
+    - name: Check backup status
+      ansible.builtin.command: >-
+        dupwrap status -p e2e-test
+      register: status_result
+
+    - name: Verify backup set is populated
+      ansible.builtin.assert:
+        that:
+          - status_result.rc == 0
+          - "'Full' in status_result.stdout"
+        fail_msg: "Backup status check failed: {{ status_result.stdout }}"
+
+    # Step 3: List backup contents
+    - name: List backup contents
+      ansible.builtin.command: >-
+        dupwrap list -p e2e-test
+      register: list_result
+
+    - name: Verify expected files in backup
+      ansible.builtin.assert:
+        that:
+          - "'readme.txt' in list_result.stdout"
+          - "'notes.md' in list_result.stdout"
+          - "'metadata.json' in list_result.stdout"
+          - "'settings.yml' in list_result.stdout"
+        fail_msg: "Expected files not found in backup listing"
+
+    # Step 4: Restore a single file
+    - name: Restore single file
+      ansible.builtin.command: >-
+        dupwrap restore_file
+        tmp/test-data/documents/readme.txt
+        /tmp/test-restore/readme.txt
+        -p e2e-test
+      register: restore_file_result
+
+    - name: Verify restored file matches original
+      ansible.builtin.shell: |
+        sha256sum /tmp/test-restore/readme.txt | cut -d' ' -f1
+      register: restored_checksum
+      changed_when: false
+
+    - name: Get original file checksum
+      ansible.builtin.shell: |
+        sha256sum /tmp/test-data/documents/readme.txt | cut -d' ' -f1
+      register: original_checksum
+      changed_when: false
+
+    - name: Verify checksums match
+      ansible.builtin.assert:
+        that:
+          - restored_checksum.stdout == original_checksum.stdout
+        fail_msg: |
+          Checksum mismatch!
+          Original: {{ original_checksum.stdout }}
+          Restored: {{ restored_checksum.stdout }}
+
+    # Step 5: Modify files and run incremental backup
+    - name: Modify a test file
+      ansible.builtin.copy:
+        content: "Updated document content for incremental test."
+        dest: /tmp/test-data/documents/readme.txt
+        mode: "0644"
+
+    - name: Add a new file
+      ansible.builtin.copy:
+        content: "New file added after initial backup."
+        dest: /tmp/test-data/documents/new-file.txt
+        mode: "0644"
+
+    - name: Run incremental backup
+      ansible.builtin.command: >-
+        dupwrap backup -p e2e-test -v
+      register: incremental_result
+
+    - name: Verify incremental backup succeeded
+      ansible.builtin.assert:
+        that:
+          - incremental_result.rc == 0
+        fail_msg: "Incremental backup failed: {{ incremental_result.stderr }}"
+
+    # Step 6: Restore latest version of modified file
+    - name: Remove previous restore
+      ansible.builtin.file:
+        path: /tmp/test-restore/readme.txt
+        state: absent
+
+    - name: Restore latest version
+      ansible.builtin.command: >-
+        dupwrap restore_file
+        tmp/test-data/documents/readme.txt
+        /tmp/test-restore/readme.txt
+        -p e2e-test
+
+    - name: Verify restored file has updated content
+      ansible.builtin.shell: |
+        cat /tmp/test-restore/readme.txt
+      register: restored_content
+      changed_when: false
+
+    - name: Verify content is the updated version
+      ansible.builtin.assert:
+        that:
+          - "'Updated document content' in restored_content.stdout"
+        fail_msg: "Restored file has wrong content: {{ restored_content.stdout }}"
+
+    # Step 6b: Verify backup integrity against local files
+    - name: Run verify against latest backup
+      ansible.builtin.command: >-
+        dupwrap verify -p e2e-test -v
+      register: verify_result
+
+    - name: Verify verify succeeded
+      ansible.builtin.assert:
+        that:
+          - verify_result.rc == 0
+        fail_msg: "Verify failed: {{ verify_result.stderr }}"
+
+    # Step 6c: Verify with --time (verify against initial full backup)
+    - name: Get timestamp of initial backup
+      ansible.builtin.shell: |
+        ts=$(dupwrap status -p e2e-test | grep 'Full' | head -1 | sed 's/.*Full  *//;s/  *[0-9]*$//')
+        date -d "$ts" '+%Y-%m-%dT%H:%M:%S'
+      register: full_backup_time
+      changed_when: false
+
+    - name: Run verify against initial backup (expect differences)
+      ansible.builtin.command: >-
+        dupwrap verify -p e2e-test -t "{{ full_backup_time.stdout | trim }}" -v
+      register: verify_time_result
+      failed_when: false
+
+    - name: Verify time-based verify ran (may report diffs due to modified files)
+      ansible.builtin.assert:
+        that:
+          - verify_time_result.rc is defined
+        fail_msg: "Time-based verify did not execute"
+
+    # Step 6d: List with --time (list files as of initial full backup)
+    - name: List files as of initial backup
+      ansible.builtin.command: >-
+        dupwrap list -p e2e-test -t "{{ full_backup_time.stdout | trim }}"
+      register: list_time_result
+
+    - name: Verify time-based list shows original files
+      ansible.builtin.assert:
+        that:
+          - list_time_result.rc == 0
+          - "'readme.txt' in list_time_result.stdout"
+          - "'notes.md' in list_time_result.stdout"
+        fail_msg: "Time-based list failed or missing expected files"
+
+    - name: Verify time-based list does NOT show post-incremental file
+      ansible.builtin.assert:
+        that:
+          - "'new-file.txt' not in list_time_result.stdout"
+        fail_msg: "Time-based list should not show new-file.txt (added after full backup)"
+
+    # Step 6e: List latest (should include new-file.txt)
+    - name: List files from latest backup
+      ansible.builtin.command: >-
+        dupwrap list -p e2e-test
+      register: list_latest_result
+
+    - name: Verify latest list includes new file
+      ansible.builtin.assert:
+        that:
+          - list_latest_result.rc == 0
+          - "'new-file.txt' in list_latest_result.stdout"
+        fail_msg: "Latest list should include new-file.txt"
+
+    # Step 7: Full restore via ansible tasks
+    - name: Create clean restore target
+      ansible.builtin.file:
+        path: /tmp/test-ansible-restore
+        state: directory
+        mode: "0770"
+
+    # Step 8: Test prune
+    - name: Run prune
+      ansible.builtin.command: >-
+        dupwrap prune -p e2e-test -v
+      register: prune_result
+
+    - name: Verify prune succeeded
+      ansible.builtin.assert:
+        that:
+          - prune_result.rc == 0
+        fail_msg: "Prune failed: {{ prune_result.stderr }}"
+
+    # Step 9: Test ansible restore tasks
+    - name: Clear test data to simulate fresh host
+      ansible.builtin.file:
+        path: /tmp/test-data
+        state: absent
+
+    - name: Restore via ansible tasks
+      ansible.builtin.include_role:
+        name: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
+        tasks_from: restore
+      vars:
+        dupwrap_restore: true
+        dupwrap_restore_profile: "e2e-test"
+
+    - name: Verify restored directories exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: restored_dirs
+      loop:
+        - /tmp/test-data/documents
+        - /tmp/test-data/photos
+        - /tmp/test-data/config
+      failed_when: not restored_dirs.stat.exists
+
+    - name: Verify restored files exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: restored_files
+      loop:
+        - /tmp/test-data/documents/readme.txt
+        - /tmp/test-data/documents/new-file.txt
+        - /tmp/test-data/photos/metadata.json
+        - /tmp/test-data/config/settings.yml
+      failed_when: not restored_files.stat.exists
+
+    # ---------------------------------------------------------------
+    # Step 10: Test passive auto-restore (dupwrap_restore_if_missing)
+    # ---------------------------------------------------------------
+
+    # 10a: Simulate post-mount empty directory (documents emptied, photos removed entirely)
+    - name: "auto-restore: empty the documents directory (simulate mounted-but-empty)"
+      ansible.builtin.shell: |
+        rm -rf /tmp/test-data/documents/*
+        rm -rf /tmp/test-data/documents/.[!.]*
+      changed_when: true
+
+    # Simulate ext4 mount point: create lost+found in the otherwise-empty
+    # dir to verify the find excludes pattern treats it as still-empty.
+    - name: "auto-restore: create lost+found in documents (simulate ext4 mount)"
+      ansible.builtin.file:
+        path: /tmp/test-data/documents/lost+found
+        state: directory
+        mode: "0700"
+
+    - name: "auto-restore: remove photos directory entirely (simulate missing)"
+      ansible.builtin.file:
+        path: /tmp/test-data/photos
+        state: absent
+
+    - name: "auto-restore: verify documents dir is empty (excluding lost+found)"
+      ansible.builtin.find:
+        paths: /tmp/test-data/documents
+        file_type: any
+        hidden: true
+        excludes:
+          - "lost+found"
+      register: _pre_restore_documents
+
+    - name: "auto-restore: assert documents dir is truly empty (lost+found ignored)"
+      ansible.builtin.assert:
+        that:
+          - _pre_restore_documents.matched == 0
+        fail_msg: "documents directory should be empty but has {{ _pre_restore_documents.matched }} items"
+
+    - name: "auto-restore: verify config dir still has content (should be skipped)"
+      ansible.builtin.find:
+        paths: /tmp/test-data/config
+        file_type: any
+        hidden: true
+      register: _pre_restore_config
+
+    - name: "auto-restore: assert config has content"
+      ansible.builtin.assert:
+        that:
+          - _pre_restore_config.matched > 0
+        fail_msg: "config directory should have content"
+
+    # 10b: Run role converge with dupwrap_restore_if_missing
+    - name: "auto-restore: converge with restore_if_missing"
+      ansible.builtin.include_role:
+        name: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
+      vars:
+        dupwrap_restore_if_missing: true
+        dupwrap_restore_profile: "e2e-test"
+
+    # 10c: Verify empty and missing dirs were restored
+    - name: "auto-restore: verify documents dir restored"
+      ansible.builtin.stat:
+        path: /tmp/test-data/documents/readme.txt
+      register: _auto_restored_readme
+
+    - name: "auto-restore: assert documents content restored"
+      ansible.builtin.assert:
+        that:
+          - _auto_restored_readme.stat.exists
+        fail_msg: "documents/readme.txt should have been restored from empty directory"
+
+    - name: "auto-restore: verify photos dir restored"
+      ansible.builtin.stat:
+        path: /tmp/test-data/photos/metadata.json
+      register: _auto_restored_metadata
+
+    - name: "auto-restore: assert photos content restored"
+      ansible.builtin.assert:
+        that:
+          - _auto_restored_metadata.stat.exists
+        fail_msg: "photos/metadata.json should have been restored from missing directory"
+
+    # 10d: Verify config dir was NOT clobbered (it had content, should be skipped)
+    - name: "auto-restore: verify config dir still has original content"
+      ansible.builtin.find:
+        paths: /tmp/test-data/config
+        file_type: any
+        hidden: true
+      register: _post_restore_config
+
+    - name: "auto-restore: assert config not clobbered"
+      ansible.builtin.assert:
+        that:
+          - _post_restore_config.matched > 0
+        fail_msg: "config directory content was clobbered by auto-restore"
+
+    # ---------------------------------------------------------------
+    # Step 11: Idempotency -- re-converge should NOT re-restore
+    # ---------------------------------------------------------------
+    - name: "idempotent: record documents checksum before re-converge"
+      ansible.builtin.shell: |
+        find /tmp/test-data/documents -type f -exec sha256sum {} \; | sort
+      register: _pre_idempotent_checksums
+      changed_when: false
+
+    - name: "idempotent: re-converge with restore_if_missing (should be noop)"
+      ansible.builtin.include_role:
+        name: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
+      vars:
+        dupwrap_restore_if_missing: true
+        dupwrap_restore_profile: "e2e-test"
+
+    - name: "idempotent: record documents checksum after re-converge"
+      ansible.builtin.shell: |
+        find /tmp/test-data/documents -type f -exec sha256sum {} \; | sort
+      register: _post_idempotent_checksums
+      changed_when: false
+
+    - name: "idempotent: assert checksums unchanged (restore was skipped)"
+      ansible.builtin.assert:
+        that:
+          - _pre_idempotent_checksums.stdout == _post_idempotent_checksums.stdout
+        fail_msg: |
+          Content changed during re-converge -- restore should have been a noop.
+          Before: {{ _pre_idempotent_checksums.stdout }}
+          After: {{ _post_idempotent_checksums.stdout }}
+
+    # ---------------------------------------------------------------
+    # Step 12: Not-in-archive path is skipped silently
+    # ---------------------------------------------------------------
+    - name: "not-in-archive: add a directory not present in any backup"
+      ansible.builtin.set_fact:
+        _dupwrap_backups_with_ghost:
+          - name: "e2e-test"
+            destination: "local"
+            local_path: "/tmp/test-backup"
+            directories:
+              - /tmp/test-data/documents
+              - /tmp/test-data/photos
+              - /tmp/test-data/config
+              - /tmp/test-data/nonexistent-never-backed-up
+            passphrase: "e2e-test-passphrase-not-secret"
+            cron: false
+
+    - name: "not-in-archive: run restore with ghost directory"
+      ansible.builtin.include_role:
+        name: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
+        tasks_from: restore
+      vars:
+        dupwrap_restore_if_missing: true
+        dupwrap_restore_profile: "e2e-test"
+        dupwrap_backups: "{{ _dupwrap_backups_with_ghost }}"

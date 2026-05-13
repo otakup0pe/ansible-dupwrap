@@ -1,0 +1,70 @@
+---
+- name: Prepare E2E S3 Test Environment
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    python_uv_install: true
+  pre_tasks:
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Install essential packages
+      ansible.builtin.apt:
+        name:
+          - curl
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Re-gather facts after lsb-release install
+      ansible.builtin.setup:
+
+  roles:
+    - role: ANXS.python
+
+  tasks:
+    - name: Verify S3 credentials are available
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'DUPWRAP_E2E_BUCKET_URI') | length > 0
+          - lookup('env', 'DUPWRAP_E2E_AWS_ACCESS_KEY_ID') | length > 0
+          - lookup('env', 'DUPWRAP_E2E_AWS_SECRET_ACCESS_KEY') | length > 0
+        fail_msg: "S3 credentials not set. Run via tests/run-e2e-s3.sh"
+
+    - name: Create test data directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /tmp/test-data/documents
+        - /tmp/test-data/photos
+
+    - name: Create test files with known content
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ item.path }}"
+        mode: "0644"
+      loop:
+        - path: /tmp/test-data/documents/readme.txt
+          content: "S3 backup test document."
+        - path: /tmp/test-data/photos/metadata.json
+          content: '{"album": "s3-test", "count": 1}'
+
+    - name: Record checksums
+      ansible.builtin.shell: |
+        find /tmp/test-data -type f -exec sha256sum {} \; | sort
+      register: original_checksums
+      changed_when: false
+
+    - name: Save checksums
+      ansible.builtin.copy:
+        content: "{{ original_checksums.stdout }}"
+        dest: /tmp/test-data-checksums.txt
+        mode: "0644"

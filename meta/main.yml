@@ -8,7 +8,8 @@ galaxy_info:
   galaxy_tags:
     - backup
     - cloud
-    - osx
+    - duplicity
+    - restore
   min_ansible_version: "2.11"
   platforms:
     - name: Ubuntu

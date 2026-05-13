@@ -3,3 +3,8 @@
 __pycache__/
 *.pyc
 *.retry
+.envrc
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl

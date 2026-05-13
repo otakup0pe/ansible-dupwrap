@@ -123,3 +123,7 @@
   ansible.builtin.file:
     path: "{{ dupwrap_log_prefix }}/dupwrap.log"
     state: "absent"
+
+- name: "Auto-restore missing directories"
+  ansible.builtin.include_tasks: "restore.yml"
+  when: dupwrap_restore_if_missing | bool

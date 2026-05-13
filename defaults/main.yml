@@ -8,9 +8,11 @@ dupwrap_log_prefix: /var/log
 dupwrap_cron: false
 dupwrap_n_full: 3
 dupwrap_remove_older: 12M
-dupwrap_encrypted_volume_size: 256m
 dupwrap_full_older: 30D
 dupwrap_backups: []
+dupwrap_restore: false
+dupwrap_restore_if_missing: false
+dupwrap_restore_profile: ""
 dupwrap_cron_verbose: false
 dupwrap_metrics: false
 dupwrap_promtext_path: "/var/run/promnode/textfiles"

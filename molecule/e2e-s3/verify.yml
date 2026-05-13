@@ -1,0 +1,49 @@
+---
+- name: Verify E2E S3 Backup and Restore
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+
+    - name: Verify restored data integrity
+      ansible.builtin.shell: |
+        cat /tmp/test-data/documents/readme.txt
+      register: doc_content
+      changed_when: false
+
+    - name: Assert document content intact
+      ansible.builtin.assert:
+        that:
+          - "'S3 document content' in doc_content.stdout"
+        fail_msg: "Document content corrupted after S3 round-trip"
+
+    - name: Verify JSON survived round-trip
+      ansible.builtin.shell: |
+        cat /tmp/test-data/photos/metadata.json
+      register: json_content
+      changed_when: false
+
+    - name: Assert JSON content intact
+      ansible.builtin.assert:
+        that:
+          - "'s3-test' in json_content.stdout"
+        fail_msg: "JSON content corrupted after S3 round-trip"
+
+    - name: Verify S3 profile config
+      ansible.builtin.shell: |
+        grep 'DESTINATION=' /etc/dupwrap/e2e-s3-test.conf
+      register: dest_check
+      changed_when: false
+
+    - name: Assert S3 destination configured
+      ansible.builtin.assert:
+        that:
+          - "'s3' in dest_check.stdout"
+
+    - name: Display verification summary
+      ansible.builtin.debug:
+        msg: |
+          E2E S3 Backup Verification Complete!
+          document: {{ 'intact' if 'S3 document content' in doc_content.stdout else 'CORRUPTED' }}
+          json: {{ 'intact' if 's3-test' in json_content.stdout else 'CORRUPTED' }}
+          destination: {{ dest_check.stdout | trim }}

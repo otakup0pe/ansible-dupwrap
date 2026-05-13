@@ -27,11 +27,9 @@ AWS_ACCESS_KEY_ID="{{ item.aws_access_key|default(dupwrap_aws_access_key) }}"
 AWS_SECRET_ACCESS_KEY="{{ item.aws_secret_key|default(dupwrap_aws_secret_key) }}"
 {% endif %}
 BUCKET="{{ item.bucket }}"
-{% elif item.destination == 'mac_usb' -%}
-# Local Mac configuration
-UNENCRYPTED_VOLUME="{{ item.unencrypted_volume|default(dupwrap_unencrypted_volume) }}"
-ENCRYPTED_VOLUME="{{ item.encrypted_volume|default(item.name) }}"
-VOLUME_SIZE="{{ item.encrypted_volume_size|default(dupwrap_encrypted_volume_size) }}"
+{% elif item.destination == 'local' -%}
+# Local filesystem configuration
+LOCAL_PATH="{{ item.local_path }}"
 {% elif item.destination == 'ftp' -%}
 # FTP Configuration
 FTP_USER="{{item.ftp_user}}"
@@ -40,6 +38,11 @@ FTP_HOST="{{item.ftp_host}}"
 FTP_PATH="{{item.ftp_path|default('')}}"
 {% endif -%}
 # Some backups move beteween hosts
+{% if item.restore_source|default('') != '' -%}
+# Override backup target when restoring (e.g. restore from USB
+# while backing up to S3)
+RESTORE_SOURCE="{{ item.restore_source }}"
+{% endif -%}
 {% if item.wandering|default(False) -%}
 WANDERING="yes"
 {% endif %}

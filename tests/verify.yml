@@ -72,6 +72,20 @@
         fail_msg: "dupwrap-swap-helper not found or not executable"
         success_msg: "dupwrap-swap-helper installed"
 
+    - name: Check restore tasks file exists
+      ansible.builtin.stat:
+        path: "{{ role_path | default(playbook_dir + '/../') }}/tasks/restore.yml"
+      register: restore_tasks
+      delegate_to: localhost
+      become: false
+
+    - name: Verify restore tasks file deployed
+      ansible.builtin.assert:
+        that:
+          - restore_tasks.stat.exists
+        fail_msg: "tasks/restore.yml not found in role"
+        success_msg: "restore tasks file present"
+
     - name: Display verification summary
       ansible.builtin.debug:
         msg: |

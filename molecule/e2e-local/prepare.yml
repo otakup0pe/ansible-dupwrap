@@ -1,0 +1,86 @@
+---
+- name: Prepare E2E Local Test Environment
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    python_uv_install: true
+  pre_tasks:
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Install essential packages
+      ansible.builtin.apt:
+        name:
+          - curl
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Re-gather facts after lsb-release install
+      ansible.builtin.setup:
+
+  roles:
+    - role: ANXS.python
+
+  tasks:
+    - name: Create test data directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /tmp/test-data/documents
+        - /tmp/test-data/photos
+        - /tmp/test-data/config
+
+    - name: Create test files with known content
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ item.path }}"
+        mode: "0644"
+      loop:
+        - path: /tmp/test-data/documents/readme.txt
+          content: "This is a test document for backup verification."
+        - path: /tmp/test-data/documents/notes.md
+          content: |
+            # Test Notes
+            These notes verify backup integrity.
+            Created for e2e testing.
+        - path: /tmp/test-data/photos/metadata.json
+          content: '{"album": "test", "count": 3}'
+        - path: /tmp/test-data/config/settings.yml
+          content: |
+            ---
+            test_key: test_value
+            nested:
+              key: value
+
+    - name: Record checksums of test files
+      ansible.builtin.shell: |
+        find /tmp/test-data -type f -exec sha256sum {} \; | sort
+      register: original_checksums
+      changed_when: false
+
+    - name: Save checksums for verification
+      ansible.builtin.copy:
+        content: "{{ original_checksums.stdout }}"
+        dest: /tmp/test-data-checksums.txt
+        mode: "0644"
+
+    - name: Create backup destination directory
+      ansible.builtin.file:
+        path: /tmp/test-backup
+        state: directory
+        mode: "0770"
+
+    - name: Create restore destination directory
+      ansible.builtin.file:
+        path: /tmp/test-restore
+        state: directory
+        mode: "0770"

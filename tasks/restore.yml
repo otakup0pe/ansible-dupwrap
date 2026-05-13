@@ -1,0 +1,125 @@
+---
+# Restore directories from a dupwrap backup profile.
+#
+# Iterates the profile's directories list and calls `dupwrap restore_file`
+# for each path. Directories that don't exist in the archive are warned
+# about but don't fail the play.
+#
+# Variables:
+#   dupwrap_restore: bool (default false) -- gate for operator-initiated restore.
+#   dupwrap_restore_if_missing: bool (default false) -- gate for passive
+#     auto-restore mode. Restores directories that are missing OR exist but
+#     are empty (e.g. freshly mounted volumes). Directories with content are
+#     skipped so re-converge is a noop.
+#   dupwrap_restore_profile: string -- which backup profile to restore from
+#   dupwrap_restore_time: string (optional) -- point-in-time restore (duplicity time format)
+#   dupwrap_restore_directories: list (optional) -- override which directories to restore.
+#     Defaults to the profile's full directories list.
+#
+# Usage (operator-initiated):
+#   - include_role:
+#       name: otakup0pe.dupwrap
+#       tasks_from: restore
+#     vars:
+#       dupwrap_restore: true
+#       dupwrap_restore_profile: "general"
+#
+# Usage (passive auto-restore on converge):
+#   Set dupwrap_restore_if_missing: true and dupwrap_restore_profile in host/group vars.
+#   The role's main.yml will include this file at end of converge.
+
+- name: "Validate restore variables"
+  ansible.builtin.assert:
+    that:
+      - (dupwrap_restore | bool) or (dupwrap_restore_if_missing | bool)
+      - dupwrap_restore_profile is defined
+      - dupwrap_restore_profile | length > 0
+    fail_msg: "dupwrap_restore or dupwrap_restore_if_missing must be true and dupwrap_restore_profile must be set"
+
+- name: "Resolve restore profile"
+  ansible.builtin.set_fact:
+    _dupwrap_restore_profile: >-
+      {{ dupwrap_backups | selectattr('name', 'equalto', dupwrap_restore_profile) | first }}
+  failed_when: _dupwrap_restore_profile is not defined
+
+- name: "Determine directories to restore"
+  ansible.builtin.set_fact:
+    _dupwrap_restore_dirs: >-
+      {{ (dupwrap_restore_directories | default(_dupwrap_restore_profile.directories))
+         | unique | list }}
+
+- name: "Check target directory state"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: _dupwrap_restore_dir_stat
+  loop: "{{ _dupwrap_restore_dirs }}"
+
+- name: "Check target directory contents"
+  ansible.builtin.find:
+    paths: "{{ item.item }}"
+    file_type: any
+    hidden: true
+    excludes:
+      - "lost+found"
+  register: _dupwrap_restore_dir_contents
+  loop: "{{ _dupwrap_restore_dir_stat.results }}"
+  when: item.stat.exists | default(false)
+
+# The stat and find loops iterate the same list in the same order, so
+# results are positionally aligned. Zip and accumulate into a list of
+# {path, exists, empty} dicts for the restore task to consume.
+- name: "Reset restore decision list"
+  ansible.builtin.set_fact:
+    _dupwrap_restore_targets: []
+
+- name: "Build restore decision list"
+  ansible.builtin.set_fact:
+    _dupwrap_restore_targets: >-
+      {{ _dupwrap_restore_targets + [{
+        'path': item.0.item,
+        'exists': item.0.stat.exists | default(false),
+        'empty': (not (item.0.stat.exists | default(false))) or (item.1.matched | default(0) == 0)
+      }] }}
+  loop: "{{ _dupwrap_restore_dir_stat.results | zip(_dupwrap_restore_dir_contents.results) | list }}"
+  loop_control:
+    label: "{{ item.0.item }}"
+
+# Duplicity refuses to restore into a non-empty target. Mount points
+# carry lost+found from ext4/etc. which we already classified as
+# logically empty (find excludes lost+found). Remove it just before
+# restore so duplicity sees a clean target.
+- name: "Clear lost+found from empty-but-mounted targets"
+  ansible.builtin.file:
+    path: "{{ item.path }}/lost+found"
+    state: absent
+  loop: "{{ _dupwrap_restore_targets }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: item.exists and item.empty
+
+- name: "Restore directories from backup"
+  ansible.builtin.command: >-
+    {{ dupwrap_bin_prefix }}/dupwrap restore_file
+    {{ item.path | regex_replace('^/', '') }}
+    {% if dupwrap_restore_time is defined and dupwrap_restore_time %}{{ dupwrap_restore_time }}{% endif %}
+    {{ item.path }}
+    -p {{ dupwrap_restore_profile }}
+  changed_when: _dupwrap_restore_results.rc == 0
+  register: _dupwrap_restore_results
+  loop: "{{ _dupwrap_restore_targets }}"
+  when: not item.exists or item.empty
+  failed_when: >-
+    _dupwrap_restore_results.rc != 0
+    and 'not found in archive' not in (_dupwrap_restore_results.stderr | default(''))
+
+- name: "Report restore results"
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item.path }}:
+      {% if item.skipped | default(false) and item.item.exists and not item.item.empty %}SKIPPED (has content)
+      {% elif item.skipped | default(false) %}SKIPPED
+      {% elif item.rc | default(0) == 0 %}RESTORED
+      {% elif 'not found in archive' in (item.stderr | default('')) %}NOT IN ARCHIVE (skipped)
+      {% else %}FAILED (rc={{ item.rc }}){% endif %}
+  loop: "{{ _dupwrap_restore_results.results }}"
+  when: _dupwrap_restore_results is defined

@@ -1,0 +1,16 @@
+---
+- name: Cleanup E2E S3 Test Data
+  hosts: all
+  become: true
+  gather_facts: false
+  ignore_unreachable: true
+  tasks:
+
+    - name: Remove test data directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/test-data
+        - /tmp/test-restore-s3
+        - /tmp/test-data-checksums.txt

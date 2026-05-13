@@ -1,0 +1,114 @@
+---
+- name: Verify E2E Local Backup and Restore
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+
+    - name: Verify dupwrap binary exists
+      ansible.builtin.stat:
+        path: /usr/local/bin/dupwrap
+      register: dupwrap_bin
+
+    - name: Assert dupwrap installed
+      ansible.builtin.assert:
+        that:
+          - dupwrap_bin.stat.exists
+          - dupwrap_bin.stat.executable
+        fail_msg: "dupwrap binary not found"
+
+    - name: Verify backup destination has data
+      ansible.builtin.find:
+        paths: /tmp/test-backup
+        file_type: file
+      register: backup_files
+
+    - name: Assert backup files exist
+      ansible.builtin.assert:
+        that:
+          - backup_files.matched > 0
+        fail_msg: "No files found in backup destination /tmp/test-backup"
+
+    - name: Verify restored data integrity
+      ansible.builtin.shell: |
+        find /tmp/test-data -type f -exec sha256sum {} \; | sort
+      register: current_checksums
+      changed_when: false
+
+    - name: Verify config file content survived round-trip
+      ansible.builtin.shell: |
+        cat /tmp/test-data/config/settings.yml
+      register: config_content
+      changed_when: false
+
+    - name: Assert config content intact
+      ansible.builtin.assert:
+        that:
+          - "'test_key: test_value' in config_content.stdout"
+        fail_msg: "Config file content corrupted after restore"
+
+    - name: Verify JSON file survived round-trip
+      ansible.builtin.shell: |
+        cat /tmp/test-data/photos/metadata.json
+      register: json_content
+      changed_when: false
+
+    - name: Assert JSON content intact
+      ansible.builtin.assert:
+        that:
+          - "'album' in json_content.stdout"
+          - "'test' in json_content.stdout"
+        fail_msg: "JSON file content corrupted after restore"
+
+    - name: Verify local backup profile config exists
+      ansible.builtin.stat:
+        path: /etc/dupwrap/e2e-test.conf
+      register: profile_config
+
+    - name: Assert profile config deployed
+      ansible.builtin.assert:
+        that:
+          - profile_config.stat.exists
+        fail_msg: "Backup profile config not found"
+
+    - name: Verify profile uses local destination
+      ansible.builtin.shell: |
+        grep 'DESTINATION=' /etc/dupwrap/e2e-test.conf
+      register: dest_check
+      changed_when: false
+
+    - name: Assert local destination configured
+      ansible.builtin.assert:
+        that:
+          - "'local' in dest_check.stdout"
+        fail_msg: "Profile not configured for local destination"
+
+    # Auto-restore verification: all three directories should have content
+    - name: Verify auto-restored directories have content
+      ansible.builtin.find:
+        paths: "{{ item }}"
+        file_type: any
+      register: auto_restore_dirs
+      loop:
+        - /tmp/test-data/documents
+        - /tmp/test-data/photos
+        - /tmp/test-data/config
+
+    - name: Assert all profile directories populated after auto-restore
+      ansible.builtin.assert:
+        that:
+          - item.matched > 0
+        fail_msg: "Directory {{ item.item }} is empty after auto-restore"
+      loop: "{{ auto_restore_dirs.results }}"
+
+    - name: Display verification summary
+      ansible.builtin.debug:
+        msg: |
+          E2E Local Backup Verification Complete!
+
+          dupwrap binary: {{ dupwrap_bin.stat.exists | ternary('installed', 'MISSING') }}
+          backup files: {{ backup_files.matched }} files in /tmp/test-backup
+          config content: {{ 'intact' if 'test_key' in config_content.stdout else 'CORRUPTED' }}
+          json content: {{ 'intact' if 'album' in json_content.stdout else 'CORRUPTED' }}
+          profile config: {{ profile_config.stat.exists | ternary('deployed', 'MISSING') }}
+          auto-restore: all profile directories populated

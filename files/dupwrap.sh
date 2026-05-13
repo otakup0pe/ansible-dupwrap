@@ -4,25 +4,17 @@
 set -e
 
 # Some globals
-declare UNENCRYPTED_VOLUME
-declare ENCRYPTED_VOLUME
-declare OS
 declare VERBOSE
 declare QUIET
-declare FORCE
 declare METRICS
 
 # Some standards
-OS="$(uname -s)"
 umask 037
 
 # Clean up after ourselves as neccesary
 function cleanup {
     if [ -n "$CUR_ULIMIT" ] ; then
         ulimit -n "$CUR_ULIMIT"
-    fi
-    if [ "$DESTINATION" == "mac_usb" ] && [ "$ACTION" != "init" ] ; then
-        unmount_volume
     fi
     if [ -n "$POST_SCRIPT" ] ; then
         $POST_SCRIPT
@@ -97,9 +89,7 @@ function exec_dup {
     if [ -f "${SHARE_DIR}/pyproject.toml" ] ; then
         e_cmd=(uv run --project "${SHARE_DIR}" duplicity)
     else
-        # Fallback to system duplicity if pyproject.toml not found
-        warn "pyproject.toml not found at ${SHARE_DIR}, falling back to system duplicity"
-        e_cmd=(duplicity)
+        problems "pyproject.toml not found at ${SHARE_DIR}"
     fi
     if [ "$CMD" != "backup" ] ; then
         e_cmd+=("$CMD")
@@ -140,72 +130,6 @@ function exec_dup {
     fi
 }
 
-# Will handle the creation of a encrypted disk image on a mac
-function mac_usb_init() {
-    [ -e "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" ] && \
-        problems "encrypted volume image ${ENCRYPTED_VOLUME}.dmg already exists"
-    cmd="hdiutil
-           create /Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg \
-           -size $VOLUME_SIZE \
-           -volname $ENCRYPTED_VOLUME \
-           -stdinpass \
-           -encryption -fs HFS+J"
-    if [ "$VERBOSE" == "true" ] ; then
-        cmd="${cmd} -verbose"
-    fi
-    dbg "$cmd"
-    $cmd <<< "$PASSPHRASE" || \
-        problems "Unable to create encrypted volume ${ENCRYPTED_VOLUME}"
-}
-
-# Will remove encrypted disk image
-function mac_usb_purge() {
-    if [ ! -e "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" ] ; then
-        dbg "encrypted volume image ${ENCRYPTED_VOLUME}.dmg already removed"
-        exit
-    fi
-    if [ -z "$FORCE" ] ; then
-        echo "Are you sure? (type yes)"
-        read -r confirm
-        [ "$confirm" == "yes" ] || problems "User unsure"
-    fi
-    rm -fP "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg"
-}
-
-# Will mount the encrypted disk image on a mac
-function mount_volume {
-    [ -e "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" ] || \
-        problems "encrypted volume image ${ENCRYPTED_VOLUME}.dmg missing"
-    if [ ! -d "/Volumes/${ENCRYPTED_VOLUME}" ]; then
-        hdiutil \
-            attach "/Volumes/${UNENCRYPTED_VOLUME}/${ENCRYPTED_VOLUME}.dmg" \
-            -stdinpass <<< "$PASSPHRASE" || \
-            problems "Unable to mount encrypted volume ${ENCRYPTED_VOLUME}"
-    else
-        dbg "encrypted volume ${ENCRYPTED_VOLUME} already mounted"
-    fi
-}
-
-# Will unmount the encrypted disk image on a mac
-function unmount_volume {
-    if [ -d  "/Volumes/${ENCRYPTED_VOLUME}" ] ; then
-        hdiutil detach "/Volumes/${ENCRYPTED_VOLUME}" \
-            || problems "Unable to unmount encrypted voume ${ENCRYPTED_VOLUME}"
-    else
-        dbg "encrypted volume $ENCRYPTED_VOLUME already unmounted"
-    fi
-    if [ "$UNMOUNT" == "true" ] ; then
-        if [ -d "/Volumes/${UNENCRYPTED_VOLUME}" ] ; then
-            hdiutil detach "/Volumes/${UNENCRYPTED_VOLUME}" \
-                || problems "Unable to unmount unencrypted voume ${UNENCRYPTED_VOLUME}"
-        else
-            dbg "Unencrypted volume $UNENCRYPTED_VOLUME already unmounted"
-        fi
-    else
-        dbg "Not unmounting unencrypted volume ${UNENCRYPTED_VOLUME}"
-    fi
-}
-
 # Performs the actual backup
 # perform an incremental backup to root, include directories, exclude everything else, / as reference.
 function backup() {
@@ -234,7 +158,32 @@ function backup() {
 
 # Display a listing of files in the backup set
 function list() {
-    exec_dup list-current-files "$BACKUP_TARGET"
+    declare -a cmd
+    cmd=(list-current-files)
+    if [ -n "$RESTORE_TIME" ] ; then
+        cmd+=(--time "$RESTORE_TIME")
+    fi
+    cmd+=("$BACKUP_TARGET")
+    exec_dup "${cmd[@]}"
+}
+
+function verify() {
+    declare -a cmd
+    cmd=(verify)
+    if [ -n "$RESTORE_TIME" ] ; then
+        cmd+=(--time "$RESTORE_TIME")
+    fi
+    for CDIR in $SOURCE ; do
+        cmd+=(--include "$CDIR")
+    done
+    cmd+=(--exclude '**')
+    cmd+=("$BACKUP_TARGET" "/")
+    START="$(date '+%s')"
+    exec_dup "${cmd[@]}"
+    END="$(date '+%s')"
+    TIME="$((END - START))"
+    prom_write "status" "verify" "$TIME"
+    prom_write "time" "verify" "$END"
 }
 
 # Restores a file to a specific location
@@ -248,7 +197,7 @@ function restore_file() {
     else
         cmd+=(--path-to-restore "$FILE" --time "$2" "$BACKUP_TARGET" "$3")
     fi
-    exec_dup "${cmd[*]}"
+    exec_dup "${cmd[@]}"
 }
 
 # Restores the whole thing optionally
@@ -260,7 +209,7 @@ function restore() {
     else
         cmd+=(--force --time "$1" "$BACKUP_TARGET" "$2")
     fi
-    exec_dup "${cmd[*]}"
+    exec_dup "${cmd[@]}"
 }
 
 # Removes non incremental and backup sets older than a
@@ -288,24 +237,15 @@ function usage() {
   USAGE:
 
   dupwrap backup
-  dupwrap list
+  dupwrap list [-t time]
+  dupwrap verify [-t time]
   dupwrap status
-  dupwarp prune (old backups)
+  dupwrap prune (old backups)
   dupwrap clean (failed backups)
   dupwrap restore [dest]
   dupwrap restore_file src [time] dest
 
 "
-    if [ "$OS" == "Darwin" ] ; then
-        echo "
-  On macOS:
-
-  dupwrap init
-  dupwrap purge
-  dupwrap mount
-  dupwrap unmount
-"
-    fi
 }
 
 # Display information on current backup set
@@ -317,7 +257,6 @@ if [ $# -lt 1 ] ; then
     usage
 fi
 ACTION="$1"
-UNMOUNT="true"
 shift
 
 if [ "$ACTION" == "restore_file" ] ; then
@@ -335,19 +274,13 @@ if [ "$ACTION" == "help" ] ; then
     usage
 fi
 
-while getopts "qdfvc:p:t:h" arg; do
+while getopts "qvc:p:t:h" arg; do
     case $arg in
 	q)
 	    QUIET="true"
 	    ;;
-        d)
-            UNMOUNT="false"
-            ;;
         v)
             VERBOSE="true"
-            ;;
-        f)
-            FORCE="true"
             ;;
         c)
             DUPWRAP_CONF="$OPTARG"
@@ -382,7 +315,7 @@ if [ -z "$DUPWRAP_CONF" ] && [ -z "$DUPWRAP_PROFILE" ] ; then
     if [ "$ACTION" == "backup" ]  ; then
         dbg "Executing backup for all profiles"
         for p in "${DUPWRAP_CONF_PREFIX}/"*.conf ; do
-            VERBOSE="$VERBOSE" QUIET="$QUIET" "$0" backup -c "$p" -d
+            VERBOSE="$VERBOSE" QUIET="$QUIET" "$0" backup -c "$p"
         done
         cleanup
         exit
@@ -435,16 +368,14 @@ if [ "$DESTINATION" == "s3" ] ; then
        export AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
        export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
     fi
-elif [ "$DESTINATION" == "mac_usb" ] ; then
-    if [ -z "$UNENCRYPTED_VOLUME" ] || \
-           [ -z "$ENCRYPTED_VOLUME" ] || \
-           [ -z "$VOLUME_SIZE" ] ; then
-        problems "invalid volume configuration"
+elif [ "$DESTINATION" == "local" ] ; then
+    if [ -z "$LOCAL_PATH" ] ; then
+        problems "LOCAL_PATH not defined for local destination"
     fi
-    if [ -z "$OS" ] || [ "$OS" != "Darwin" ] ; then
-        problems "invalid os"
+    if [ ! -d "$LOCAL_PATH" ] ; then
+        mkdir -p "$LOCAL_PATH" || problems "Unable to create local backup path ${LOCAL_PATH}"
     fi
-    BACKUP_TARGET="file:///Volumes/${ENCRYPTED_VOLUME}"
+    BACKUP_TARGET="file://${LOCAL_PATH}"
 elif [ "$DESTINATION" == "ftp" ] ; then
     if [ -z "$FTP_USER" ] || \
            [ -z "$FTP_PASSWORD" ] ; then
@@ -456,37 +387,14 @@ else
     problems "Unknown destination ${DESTINATION}"
 fi
 
-
-if [ "$OS" == "Darwin" ] ; then
-    # lol case insentive -d on macs
-    # shellcheck disable=SC2010
-    if ! (ls -1 /Volumes | grep "$UNENCRYPTED_VOLUME" &> /dev/null) ; then
-        # FAT is always uppercase, so check
-        if ! (ls -1 /Volumes | grep "$UNENCRYPTED_VOLUME" &> /dev/null) ; then
-            UNMOUNTED="$(diskutil list | grep "$UNENCRYPTED_VOLUME" | cut -c 69-)"
-            if [ -n "$UNMOUNTED" ] ; then
-                diskutil mount "/dev/${UNMOUNTED}"
-            else
-                problems "unencrypted volume ${UNENCRYPTED_VOLUME} not found"
-            fi
-        fi
-    fi
-    if [ "$ACTION" == "init" ] ; then
-        mac_usb_init
-        exit
-    elif [ "$ACTION" == "purge" ] ; then
-        mac_usb_purge
-        exit
-    elif [ "$ACTION" == "mount" ] ; then
-        mount_volume
-        exit
-    elif [ "$ACTION" == "unmount" ] ; then
-        unmount_volume
-        exit
-    else
-        mount_volume
+# Override backup target for restore operations if RESTORE_SOURCE is set
+if [ -n "$RESTORE_SOURCE" ] ; then
+    if [ "$ACTION" = "restore" ] || [ "$ACTION" = "restore_file" ] ; then
+        log "Using restore source override: ${RESTORE_SOURCE}"
+        BACKUP_TARGET="$RESTORE_SOURCE"
     fi
 fi
+
 CUR_ULIMIT=$(ulimit -n)
 if [ "${CUR_ULIMIT}" -lt 1024 ] ; then
     ulimit -n 1024
@@ -502,6 +410,9 @@ if [ "$ACTION" = "backup" ]; then
     cleanup
 elif [ "$ACTION" = "list" ]; then
     list
+    cleanup
+elif [ "$ACTION" = "verify" ]; then
+    verify
     cleanup
 elif [ "$ACTION" = "restore" ] ; then
     if [ -z "$RESTORE_TIME" ] ; then

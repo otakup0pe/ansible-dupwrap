@@ -2,6 +2,7 @@
 dupwrap_debian_pkgs:
   - "gnupg"
   - "librsync2"
+  - "librsync-dev"
   - "lftp"
 
 # todo remove this after nobody cares about focal
@@ -9,9 +10,5 @@ dupwrap_focal_build_pkgs:
   - "libxml2-dev"
   - "libxslt1-dev"
   - "python3-dev"
-dupwrap_darwin_brews:
-  - "gnupg"
-  - "librsync"
-  - "lftp"
 dupwrap_helpers:
   - "swap"
