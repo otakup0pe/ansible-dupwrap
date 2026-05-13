@@ -5,6 +5,7 @@ exclude_paths:
   - .cache/
   - .github/
   - .venv/
+  - molecule/
 
 offline: true
 

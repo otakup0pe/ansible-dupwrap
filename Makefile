@@ -27,7 +27,7 @@ shellcheck:
 
 lint: $(VENV) shellcheck
 	$(BIN)/yamllint -c .yamllint defaults tasks vars meta
-	$(BIN)/ansible-lint -c .ansible-lint defaults tasks vars meta
+	$(BIN)/ansible-lint
 
 test: lint test-all test-e2e-local
 
