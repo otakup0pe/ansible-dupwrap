@@ -107,6 +107,10 @@ Empty-directory detection uses `ansible.builtin.find` with `file_type: any` and 
 
 This mode is distinct from operator-initiated `dupwrap_restore`, which remains explicit (`include_role` with `tasks_from: restore`). Both variables gate the same restore tasks -- the assert requires at least one of them to be true.
 
+## Credential Script
+
+The `cred_script` job variable specifies a script that is **sourced** (not executed) before the backup runs. It is intended for dynamic credential injection — the script should export `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for S3 destinations. Because the script is sourced, exports propagate into the dupwrap process. The script must use `return 1` (not `exit 1`) on failure to avoid killing the parent process.
+
 ## Swap Helper
 
 The swap helper script (`dupwrap-swap-helper`) is meant to be used with the `pre_script` and `post_script` job variables. It is invoked with a single argument which is either `pre` or `post`.

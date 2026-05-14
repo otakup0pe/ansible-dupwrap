@@ -359,6 +359,17 @@ if [ -z "$KEEP_N_FULL" ] ||
     problems "invalid rotation configuration"
 fi
 
+if [ -n "$CRED_SCRIPT" ] ; then
+    if [ ! -f "$CRED_SCRIPT" ] ; then
+        problems "CRED_SCRIPT not found: ${CRED_SCRIPT}"
+    fi
+    if [ ! -r "$CRED_SCRIPT" ] ; then
+        problems "CRED_SCRIPT not readable: ${CRED_SCRIPT}"
+    fi
+    # shellcheck disable=SC1090
+    . "$CRED_SCRIPT" || problems "CRED_SCRIPT failed: ${CRED_SCRIPT}"
+fi
+
 if [ "$DESTINATION" == "s3" ] ; then
     if [ -z "$BUCKET" ] ; then \
         problems "bad configuration"

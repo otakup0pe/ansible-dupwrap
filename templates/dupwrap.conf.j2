@@ -9,6 +9,7 @@ NAME="{{item.name}}"
 # Hooks!
 PRE_SCRIPT="{{ item.pre_script|default('') }}"
 POST_SCRIPT="{{ item.post_script|default('') }}"
+CRED_SCRIPT="{{ item.cred_script|default('') }}"
 # Backup rotation
 KEEP_N_FULL="{{ item.n_full|default(dupwrap_n_full) }}"
 REMOVE_OLDER="{{ item.n_full|default(dupwrap_remove_older) }}"
