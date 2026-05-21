@@ -24,5 +24,5 @@ dependencies:
   - role: ANXS.python
   - role: ANXS.build-essential
     when:
-      - ansible_os_family == 'Debian'
-      - ansible_distribution_release == 'focal'
+      - ansible_facts['os_family'] == 'Debian'
+      - ansible_facts['distribution_release'] == 'focal'

@@ -10,7 +10,7 @@
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: true
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
 
     - name: Install essential packages
       ansible.builtin.apt:
@@ -20,7 +20,7 @@
           - gnupg
           - lsb-release
         state: present
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
 
     - name: Re-gather facts after lsb-release install
       ansible.builtin.setup:

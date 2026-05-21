@@ -11,12 +11,12 @@
   ansible.builtin.apt:
     pkg: "{{ dupwrap_debian_pkgs }}"
     state: present
-  when: ansible_os_family == 'Debian'
+  when: ansible_facts['os_family'] == 'Debian'
 
 - name: "Install Focal build dependencies for lxml"
   ansible.builtin.apt:
     pkg: "{{ dupwrap_focal_build_pkgs }}"
     state: present
   when:
-    - ansible_os_family == 'Debian'
-    - ansible_distribution_release == 'focal'
+    - ansible_facts['os_family'] == 'Debian'
+    - ansible_facts['distribution_release'] == 'focal'
