@@ -86,8 +86,28 @@ function exec_dup {
     # Use uv to run duplicity with managed Python dependencies
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     SHARE_DIR="$(dirname "${SCRIPT_DIR}")/share/dupwrap"
+    # Resolve uv. Cron runs with a minimal PATH that omits the uv install
+    # directory (fails under cron on nehmetawy; fine where uv is already on
+    # PATH), so prefer PATH then fall back to known install locations --
+    # mirrors the uvx resolution in dupwrap-vault-creds.
+    UV_BIN="$(command -v uv 2>/dev/null || true)"
+    if [ -z "$UV_BIN" ] ; then
+        for _uv_cand in \
+            /usr/local/bin/uv \
+            "${HOME}/.local/bin/uv" \
+            /root/.local/bin/uv \
+            /home/rewt/.local/bin/uv ; do
+            if [ -x "$_uv_cand" ] ; then
+                UV_BIN="$_uv_cand"
+                break
+            fi
+        done
+    fi
+    if [ -z "$UV_BIN" ] ; then
+        problems "uv not found on PATH or known install locations"
+    fi
     if [ -f "${SHARE_DIR}/pyproject.toml" ] ; then
-        e_cmd=(uv run --project "${SHARE_DIR}" duplicity)
+        e_cmd=("$UV_BIN" run --project "${SHARE_DIR}" duplicity)
     else
         problems "pyproject.toml not found at ${SHARE_DIR}"
     fi
@@ -109,12 +129,17 @@ function exec_dup {
     e_cmd+=("${A_CMD[@]:1}")
     dbg "executing ${e_cmd[*]}"
     START=$(date +%s)
+    # Capture RC explicitly. Under set -e the quiet redirect (a plain
+    # command, not a pipeline) would abort the script on a non-zero
+    # duplicity exit -- before the error branch below could write the
+    # error metric or log -- so a failed -q/cron backup died silently.
+    RC=0
     if [ -n "$QUIET" ] ; then
-	"${e_cmd[@]}" >> "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log"
+	"${e_cmd[@]}" >> "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log" || RC=$?
     else
 	"${e_cmd[@]}" | tee -a "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log"
+	RC=${PIPESTATUS[0]}
     fi
-    RC=${PIPESTATUS[0]}
     FINISH=$(date +%s)
     local TIME=$((FINISH - START))
     if [ "$RC" == "0" ] ; then
@@ -366,8 +391,15 @@ if [ -n "$CRED_SCRIPT" ] ; then
     if [ ! -r "$CRED_SCRIPT" ] ; then
         problems "CRED_SCRIPT not readable: ${CRED_SCRIPT}"
     fi
+    # Scope set +e around the source: a failing command in a sourced cred
+    # script would otherwise abort dupwrap mid-source under set -e, before
+    # the guard below can run -- a silent failure with no log and no metric.
+    set +e
     # shellcheck disable=SC1090
-    . "$CRED_SCRIPT" || problems "CRED_SCRIPT failed: ${CRED_SCRIPT}"
+    . "$CRED_SCRIPT"
+    _cred_rc=$?
+    set -e
+    [ "$_cred_rc" -eq 0 ] || problems "CRED_SCRIPT failed (rc=${_cred_rc}): ${CRED_SCRIPT}"
 fi
 
 if [ "$DESTINATION" == "s3" ] ; then
