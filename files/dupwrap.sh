@@ -135,9 +135,9 @@ function exec_dup {
     # error metric or log -- so a failed -q/cron backup died silently.
     RC=0
     if [ -n "$QUIET" ] ; then
-	"${e_cmd[@]}" >> "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log" || RC=$?
+	"${e_cmd[@]}" >> "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log" 2>&1 || RC=$?
     else
-	"${e_cmd[@]}" | tee -a "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log"
+	"${e_cmd[@]}" 2>&1 | tee -a "${LOG_DIRECTORY}/dupwrap-${DUPWRAP_PROFILE}.log"
 	RC=${PIPESTATUS[0]}
     fi
     FINISH=$(date +%s)
@@ -151,7 +151,7 @@ function exec_dup {
 	    prom_write "status" "error" "$TIME"
 	    prom_write "time" "error" "$FINISH"
 	fi
-        problems "UNABLE to ${CMD} after ${TIME}s"
+        problems "UNABLE to ${CMD} after ${TIME}s (rc=${RC})"
     fi
 }
 

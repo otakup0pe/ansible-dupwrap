@@ -110,7 +110,9 @@
   when: not item.exists or item.empty
   failed_when: >-
     _dupwrap_restore_results.rc != 0
-    and 'not found in archive' not in (_dupwrap_restore_results.stderr | default(''))
+    and 'not found in archive' not in
+    ((_dupwrap_restore_results.stdout | default(''))
+    ~ (_dupwrap_restore_results.stderr | default('')))
 
 - name: "Report restore results"
   ansible.builtin.debug:
@@ -119,7 +121,8 @@
       {% if item.skipped | default(false) and item.item.exists and not item.item.empty %}SKIPPED (has content)
       {% elif item.skipped | default(false) %}SKIPPED
       {% elif item.rc | default(0) == 0 %}RESTORED
-      {% elif 'not found in archive' in (item.stderr | default('')) %}NOT IN ARCHIVE (skipped)
+      {% elif 'not found in archive' in
+        ((item.stdout | default('')) ~ (item.stderr | default(''))) %}NOT IN ARCHIVE (skipped)
       {% else %}FAILED (rc={{ item.rc }}){% endif %}
   loop: "{{ _dupwrap_restore_results.results }}"
   when: _dupwrap_restore_results is defined

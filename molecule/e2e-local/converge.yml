@@ -411,3 +411,86 @@
         dupwrap_restore_if_missing: true
         dupwrap_restore_profile: "e2e-test"
         dupwrap_backups: "{{ _dupwrap_backups_with_ghost }}"
+
+    # ---------------------------------------------------------------
+    # Step 13: Preserve subprocess stderr and report its real exit code
+    # ---------------------------------------------------------------
+    - name: "logging: create deterministic shim directory"
+      ansible.builtin.file:
+        path: /tmp/dupwrap-test-bin
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "logging: install deterministic failing uv shim"
+      ansible.builtin.copy:
+        dest: /tmp/dupwrap-test-bin/uv
+        content: |
+          #!/bin/sh
+          printf '%s\n' "${DUPWRAP_TEST_STDERR:-synthetic stderr}" >&2
+          exit "${DUPWRAP_TEST_RC:-42}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "logging: clear prior profile log"
+      ansible.builtin.file:
+        path: /var/log/dupwrap-e2e-test.log
+        state: absent
+
+    - name: "logging: run quiet backup with stderr-only failure"
+      ansible.builtin.command: dupwrap backup -p e2e-test -q
+      environment:
+        PATH: "/tmp/dupwrap-test-bin:{{ ansible_env.PATH }}"
+        DUPWRAP_TEST_STDERR: "synthetic quiet stderr"
+        DUPWRAP_TEST_RC: "42"
+      register: _quiet_failure
+      changed_when: false
+      failed_when: false
+
+    - name: "logging: read quiet-mode profile log"
+      ansible.builtin.slurp:
+        src: /var/log/dupwrap-e2e-test.log
+      register: _quiet_log
+
+    - name: "logging: assert quiet stderr and exit code are preserved"
+      ansible.builtin.assert:
+        that:
+          - _quiet_failure.rc == 1
+          - "'rc=42' in _quiet_failure.stderr"
+          - "'synthetic quiet stderr' in (_quiet_log.content | b64decode)"
+        fail_msg: |
+          quiet failure={{ _quiet_failure }}
+          quiet log={{ _quiet_log.content | b64decode }}
+
+    - name: "logging: clear quiet-mode profile log"
+      ansible.builtin.file:
+        path: /var/log/dupwrap-e2e-test.log
+        state: absent
+
+    - name: "logging: run verbose backup with stderr-only failure"
+      ansible.builtin.command: dupwrap backup -p e2e-test -v
+      environment:
+        PATH: "/tmp/dupwrap-test-bin:{{ ansible_env.PATH }}"
+        DUPWRAP_TEST_STDERR: "synthetic verbose stderr"
+        DUPWRAP_TEST_RC: "43"
+      register: _verbose_failure
+      changed_when: false
+      failed_when: false
+
+    - name: "logging: read verbose-mode profile log"
+      ansible.builtin.slurp:
+        src: /var/log/dupwrap-e2e-test.log
+      register: _verbose_log
+
+    - name: "logging: assert verbose stderr and exit code are preserved"
+      ansible.builtin.assert:
+        that:
+          - _verbose_failure.rc == 1
+          - "'rc=43' in _verbose_failure.stderr"
+          - "'synthetic verbose stderr' in _verbose_failure.stdout"
+          - "'synthetic verbose stderr' in (_verbose_log.content | b64decode)"
+        fail_msg: |
+          verbose failure={{ _verbose_failure }}
+          verbose log={{ _verbose_log.content | b64decode }}
