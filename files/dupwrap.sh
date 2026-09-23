@@ -150,6 +150,9 @@ function exec_dup {
 	if [ "$CMD" == "backup" ] ; then
 	    prom_write "status" "error" "$TIME"
 	    prom_write "time" "error" "$FINISH"
+	elif [ "$CMD" == "verify" ] ; then
+	    prom_write "status" "verify_error" "$TIME"
+	    prom_write "time" "verify_error" "$FINISH"
 	fi
         problems "UNABLE to ${CMD} after ${TIME}s (rc=${RC})"
     fi
@@ -262,6 +265,7 @@ function usage() {
   USAGE:
 
   dupwrap backup
+  dupwrap backup_verify
   dupwrap list [-t time]
   dupwrap verify [-t time]
   dupwrap status
@@ -337,10 +341,10 @@ fi
 [ -d "$DUPWRAP_CONF_PREFIX" ] || problems "dupwrap config directory missing, or not set"
 
 if [ -z "$DUPWRAP_CONF" ] && [ -z "$DUPWRAP_PROFILE" ] ; then
-    if [ "$ACTION" == "backup" ]  ; then
-        dbg "Executing backup for all profiles"
+    if [ "$ACTION" == "backup" ] || [ "$ACTION" == "backup_verify" ] ; then
+        dbg "Executing ${ACTION} for all profiles"
         for p in "${DUPWRAP_CONF_PREFIX}/"*.conf ; do
-            VERBOSE="$VERBOSE" QUIET="$QUIET" "$0" backup -c "$p"
+            VERBOSE="$VERBOSE" QUIET="$QUIET" "$0" "$ACTION" -c "$p"
         done
         cleanup
         exit
@@ -450,6 +454,13 @@ if [ "$ACTION" = "backup" ]; then
         $PRE_SCRIPT
     fi
     backup
+    cleanup
+elif [ "$ACTION" = "backup_verify" ]; then
+    if [ -n "$PRE_SCRIPT" ] ; then
+        $PRE_SCRIPT
+    fi
+    backup
+    verify
     cleanup
 elif [ "$ACTION" = "list" ]; then
     list

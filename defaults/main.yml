@@ -6,6 +6,13 @@ dupwrap_bin_prefix: /usr/local/bin
 dupwrap_share_prefix: /usr/local/share
 dupwrap_log_prefix: /var/log
 dupwrap_cron: false
+# Archive verification is opt-in because duplicity downloads the backup set.
+dupwrap_verify_cron: false
+dupwrap_verify_after_backup: false
+dupwrap_verify_day: "1"
+dupwrap_verify_weekday: "*"
+dupwrap_verify_month: "*"
+dupwrap_verify_hour: "4"
 dupwrap_n_full: 3
 dupwrap_remove_older: 12M
 dupwrap_full_older: 30D

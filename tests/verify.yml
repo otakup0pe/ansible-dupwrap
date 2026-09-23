@@ -33,6 +33,49 @@
         fail_msg: "pyproject.toml not found at {{ dupwrap_share_prefix }}/dupwrap/"
         success_msg: "pyproject.toml deployed correctly"
 
+    - name: Check enabled verify cron file
+      ansible.builtin.stat:
+        path: /etc/cron.d/dupwrap-verify-verify-enabled
+      register: verify_cron_enabled
+
+    - name: Read enabled verify cron file
+      ansible.builtin.slurp:
+        src: /etc/cron.d/dupwrap-verify-verify-enabled
+      register: verify_cron_content
+
+    - name: Verify per-profile schedule and command
+      ansible.builtin.assert:
+        that:
+          - verify_cron_enabled.stat.exists
+          - >-
+            '0 5 2 1,4,7,10 * root'
+            in (verify_cron_content.content | b64decode)
+          - >-
+            'dupwrap verify -p verify-enabled -q'
+            in (verify_cron_content.content | b64decode)
+
+    - name: Read backup cron file with post-backup verification
+      ansible.builtin.slurp:
+        src: /etc/cron.d/dupwrap-backup-verify-enabled
+      register: backup_verify_cron_content
+
+    - name: Verify successful backup chains directly into verification
+      ansible.builtin.assert:
+        that:
+          - >-
+            'dupwrap backup_verify -p verify-enabled -q'
+            in (backup_verify_cron_content.content | b64decode)
+
+    - name: Check disabled verify cron file
+      ansible.builtin.stat:
+        path: /etc/cron.d/dupwrap-verify-verify-disabled
+      register: verify_cron_disabled
+
+    - name: Verify opt-out removes the cron file
+      ansible.builtin.assert:
+        that:
+          - not verify_cron_disabled.stat.exists
+
     - name: Check uv is available
       ansible.builtin.command: uv --version
       register: uv_check

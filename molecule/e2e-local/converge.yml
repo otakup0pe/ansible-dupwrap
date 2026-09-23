@@ -13,17 +13,21 @@
           - /tmp/test-data/photos
           - /tmp/test-data/config
         passphrase: "e2e-test-passphrase-not-secret"
-        cron: false
+        cron: true
+        verify_cron: false
+        verify_after_backup: true
+        metrics: true
     dupwrap_metrics: false
+    dupwrap_promtext_path: /tmp/dupwrap-promtext
 
   roles:
     - role: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
 
   tasks:
     # Step 1: Run initial backup
-    - name: Run initial backup
+    - name: Run initial backup and chained verification
       ansible.builtin.command: >-
-        dupwrap backup -p e2e-test -v
+        dupwrap backup_verify -p e2e-test -v
       register: backup_result
 
     - name: Verify backup succeeded
@@ -31,6 +35,24 @@
         that:
           - backup_result.rc == 0
         fail_msg: "Initial backup failed: {{ backup_result.stderr }}"
+
+    - name: Read initial backup and verification metrics
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+      register: initial_backup_verify_metrics
+
+    - name: Verify combined action emitted backup and verification success
+      ansible.builtin.assert:
+        that:
+          - >-
+            (initial_backup_verify_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_time\\{task="backup", backup_name="e2e-test"\\} [0-9]+$')
+          - >-
+            (initial_backup_verify_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_time\\{task="verify", backup_name="e2e-test"\\} [0-9]+$')
+          - >-
+            'task="verify_error"' not in
+            (initial_backup_verify_metrics.content | b64decode)
 
     # Step 2: Verify backup set exists
     - name: Check backup status
@@ -140,6 +162,18 @@
         fail_msg: "Restored file has wrong content: {{ restored_content.stdout }}"
 
     # Step 6b: Verify backup integrity against local files
+    - name: Read scheduled verification metric
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-verify-schedule.prom
+      register: verify_schedule_metric
+
+    - name: Verify scheduled profile is observable before execution
+      ansible.builtin.assert:
+        that:
+          - >-
+            (verify_schedule_metric.content | b64decode)
+            is regex('(?m)^dupwrap_verify_scheduled\\{backup_name="e2e-test"\\} 1$')
+
     - name: Run verify against latest backup
       ansible.builtin.command: >-
         dupwrap verify -p e2e-test -v
@@ -150,6 +184,23 @@
         that:
           - verify_result.rc == 0
         fail_msg: "Verify failed: {{ verify_result.stderr }}"
+
+    - name: Read verify metrics
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+      register: verify_metrics
+
+    - name: Verify successful integrity-check metrics
+      ansible.builtin.assert:
+        that:
+          - >-
+            (verify_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_status\\{task="verify", backup_name="e2e-test"\\} [0-9]+$')
+          - >-
+            (verify_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_time\\{task="verify", backup_name="e2e-test"\\} [0-9]+$')
+          - >-
+            'task="verify_error"' not in (verify_metrics.content | b64decode)
 
     # Step 6c: Verify with --time (verify against initial full backup)
     - name: Get timestamp of initial backup

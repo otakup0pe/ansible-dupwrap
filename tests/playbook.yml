@@ -4,6 +4,26 @@
   become: true
   gather_facts: true
   vars:
-    dupwrap_backups: []
+    dupwrap_backups:
+      - name: verify-enabled
+        destination: local
+        local_path: /tmp/dupwrap-verify-enabled
+        directories:
+          - /tmp
+        passphrase: molecule-verify-enabled
+        cron: true
+        verify_cron: true
+        verify_after_backup: true
+        verify_day: "2"
+        verify_month: "1,4,7,10"
+        verify_hour: "5"
+      - name: verify-disabled
+        destination: local
+        local_path: /tmp/dupwrap-verify-disabled
+        directories:
+          - /tmp
+        passphrase: molecule-verify-disabled
+        cron: false
+        verify_cron: false
   roles:
     - role: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"

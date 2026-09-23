@@ -67,15 +67,13 @@
     cron_file: "dupwrap-backup-{{ item.name }}"
     name: "YOLO nightly backup"
     special_time: "daily"
-    job: >
-      bash -c '{{ dupwrap_bin_prefix }}/dupwrap backup -p {{ item.name }}
-      {% if dupwrap_cron_verbose -%}
-      -v &>> {{ dupwrap_log_prefix }}/dupwrap.log
-      {% else %}
-      -q{%- endif -%}'
+    job: "bash -c '{{ dupwrap_bin_prefix }}/dupwrap {{ dupwrap_backup_action }} -p {{ item.name }} {{ dupwrap_cron_flags }}'"
     user: "{{ dupwrap_user }}"
     state: "{% if item.cron | default(dupwrap_cron) %}present\
     {% else %}absent{% endif %}"
+  vars:
+    dupwrap_backup_action: "{{ 'backup_verify' if (item.verify_after_backup | default(dupwrap_verify_after_backup) | bool) else 'backup' }}"
+    dupwrap_cron_flags: "{{ '-v &>> ' ~ dupwrap_log_prefix ~ '/dupwrap.log' if dupwrap_cron_verbose else '-q' }}"
   loop: "{{ dupwrap_backups }}"
 
 - name: "Set cron backup prune"
@@ -94,6 +92,53 @@
     state: "{% if item.cron | default(dupwrap_cron) %}present\
     {% else %}absent{% endif %}"
   loop: "{{ dupwrap_backups }}"
+
+- name: "Set cron backup verify"
+  ansible.builtin.cron:
+    cron_file: "dupwrap-verify-{{ item.name }}"
+    name: "Verify backup integrity"
+    minute: "0"
+    hour: "{{ item.verify_hour | default(dupwrap_verify_hour) }}"
+    day: "{{ item.verify_day | default(dupwrap_verify_day) }}"
+    month: "{{ item.verify_month | default(dupwrap_verify_month) }}"
+    weekday: "{{ item.verify_weekday | default(dupwrap_verify_weekday) }}"
+    job: >-
+      bash -c '{{ dupwrap_bin_prefix }}/dupwrap verify -p {{ item.name }}
+      {{ "-v &>> " ~ dupwrap_log_prefix ~ "/dupwrap.log"
+         if dupwrap_cron_verbose else "-q" }}'
+    user: "{{ dupwrap_user }}"
+    state: "{% if item.verify_cron | default(dupwrap_verify_cron) %}present\
+    {% else %}absent{% endif %}"
+  loop: "{{ dupwrap_backups }}"
+
+- name: "Publish scheduled verification metrics"
+  ansible.builtin.template:
+    src: "dupwrap-verify-schedule.prom.j2"
+    dest: "{{ dupwrap_promtext_path }}/dupwrap-verify-schedule.prom"
+    owner: "{{ dupwrap_user }}"
+    group: "{{ dupwrap_group }}"
+    mode: "0640"
+  when: >-
+    (dupwrap_metrics | bool) or
+    (dupwrap_backups
+     | selectattr("metrics", "defined")
+     | selectattr("metrics")
+     | list
+     | length > 0)
+
+- name: "Remove scheduled verification metrics when metrics are disabled"
+  ansible.builtin.file:
+    path: "{{ dupwrap_promtext_path }}/dupwrap-verify-schedule.prom"
+    state: absent
+  when: >-
+    not (
+      (dupwrap_metrics | bool) or
+      (dupwrap_backups
+       | selectattr("metrics", "defined")
+       | selectattr("metrics")
+       | list
+       | length > 0)
+    )
 
 - name: "Install helper scripts"
   ansible.builtin.copy:

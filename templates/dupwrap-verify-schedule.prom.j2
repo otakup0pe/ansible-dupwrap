@@ -1,0 +1,10 @@
+# HELP dupwrap_verify_scheduled Whether archive verification is scheduled for a backup profile
+# TYPE dupwrap_verify_scheduled gauge
+{% for backup in dupwrap_backups %}
+{% set metrics_enabled = backup.metrics | default(dupwrap_metrics) | bool %}
+{% set cron_verify = backup.verify_cron | default(dupwrap_verify_cron) | bool %}
+{% set post_backup_verify = backup.verify_after_backup | default(dupwrap_verify_after_backup) | bool %}
+{% if backup.state | default("present") == "present" and metrics_enabled and (cron_verify or post_backup_verify) %}
+dupwrap_verify_scheduled{backup_name={{ backup.name | to_json }}} 1
+{% endif %}
+{% endfor %}

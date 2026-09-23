@@ -17,6 +17,7 @@
         name:
           - curl
           - ca-certificates
+          - cron
           - gnupg
           - lsb-release
         state: present
@@ -38,6 +39,7 @@
         - /tmp/test-data/documents
         - /tmp/test-data/photos
         - /tmp/test-data/config
+        - /tmp/dupwrap-promtext
 
     - name: Create test files with known content
       ansible.builtin.copy:
