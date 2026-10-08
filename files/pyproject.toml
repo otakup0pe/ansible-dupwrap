@@ -2,9 +2,15 @@
 name = "dupwrap"
 version = "0.1.0"
 description = "Duplicity wrapper dependencies"
-requires-python = ">=3.8"
+# duplicity 3.0.7 requires setuptools>=78.1.0, whose supported Python floor
+# is 3.9. Keeping 3.8 here makes uv solve for an impossible interpreter even
+# when the active host interpreter is newer, so every dupwrap action fails.
+requires-python = ">=3.9"
 dependencies = [
-    "duplicity",
+    # Pin duplicity so retention semantics cannot change without a repository
+    # change. The meaning of remove-all-inc-of-but-n-full differs across major
+    # versions; 3.0.7 is the tested compatibility target.
+    "duplicity==3.0.7",
     "fasteners",
     "boto3",
     "paramiko"

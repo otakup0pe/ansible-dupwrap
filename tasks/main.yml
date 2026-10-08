@@ -1,4 +1,39 @@
 ---
+# Duplicity does not encode profile identity in remote object names. Require a
+# distinct prefix per profile so chains cannot be mixed at one target.
+- name: "Assert each backup profile has a distinct remote target"
+  ansible.builtin.assert:
+    that:
+      - "_dupwrap_targets | length == (_dupwrap_targets | unique | length)"
+    fail_msg: >-
+      Two or more dupwrap_backups entries share a remote target:
+      {{ _dupwrap_targets | join(', ') }}. Give each profile its own prefix
+      (e.g. s3://example-bucket/profile-a/ and s3://example-bucket/profile-b/), never the bare
+      bucket root -- duplicity cannot tell two chains apart at one prefix.
+    quiet: true
+  vars:
+    _dupwrap_targets: "{{ dupwrap_backups | selectattr('bucket', 'defined') | map(attribute='bucket') | list }}"
+
+# --path-to-restore addresses an entry relative to the archive root. Reject
+# absolute paths rather than silently comparing a different entry. Paths are
+# passed as argv elements, so spaces, unicode, and metacharacters are valid.
+- name: "Assert verify include paths are relative to the backup root"
+  ansible.builtin.assert:
+    that:
+      - "_dupwrap_absolute_includes | length == 0"
+    fail_msg: >-
+      verify_include paths must be relative to the backup root, got:
+      {{ _dupwrap_absolute_includes | join(', ') }}. dupwrap passes each one
+      to duplicity as --path-to-restore, which names a path inside the
+      archive -- so use "srv/documents/report.pdf", not "/srv/documents/report.pdf".
+    quiet: true
+  vars:
+    _dupwrap_includes: >-
+      {{ dupwrap_backups
+         | map(attribute='verify_include', default=dupwrap_verify_include)
+         | flatten | list }}
+    _dupwrap_absolute_includes: "{{ _dupwrap_includes | select('match', '/') | list }}"
+
 - name: "Include dependency tasks"
   ansible.builtin.include_tasks: "deps.yml"
 
@@ -33,6 +68,44 @@
   loop: "{{ dupwrap_backups }}"
   when: item.state | default("present") == "absent"
 
+# One path per line, no quoting and no escaping, which is the whole point: a
+# path with spaces or unicode never has to survive a shell. The cron job
+# therefore carries a fixed profile name and no operator data at all.
+#
+# dupwrap READS this file and runs one `duplicity verify --path-to-restore`
+# per line; it is no longer handed to duplicity as a filelist, because verify
+# ignores the include set on the pinned 3.0.7. Name, location and format are
+# unchanged, so an already-provisioned fleet needed no file moved -- only the
+# paths inside flipped from absolute to relative.
+#
+# Deliberately NO header or comment line. dupwrap treats every non-empty line
+# as a path, so a header would become a bogus --path-to-restore: one extra
+# duplicity run against a path that does not exist, which the per-path
+# zero-compared guard would then fail the whole verify over.
+- name: "Generate verify include lists"
+  ansible.builtin.template:
+    src: "dupwrap-verify-include.j2"
+    dest: "{{ dupwrap_config_prefix }}/dupwrap/{{ item.name }}.verify-include"
+    owner: "{{ dupwrap_user }}"
+    group: "{{ dupwrap_group }}"
+    mode: "0640"
+  loop: "{{ dupwrap_backups }}"
+  when:
+    - item.state | default("present") == "present"
+    - (item.verify_include | default(dupwrap_verify_include)) | length > 0
+
+# Removing it is what turns scoping back off: dupwrap falls back to SOURCE
+# when the file is missing or empty, so a profile that drops verify_include
+# must not be left with a stale list still narrowing its verify.
+- name: "Remove unused verify include lists"
+  ansible.builtin.file:
+    path: "{{ dupwrap_config_prefix }}/dupwrap/{{ item.name }}.verify-include"
+    state: absent
+  loop: "{{ dupwrap_backups }}"
+  when: >-
+    item.state | default("present") == "absent"
+    or (item.verify_include | default(dupwrap_verify_include)) | length == 0
+
 - name: "Install wrapper"
   ansible.builtin.copy:
     src: "dupwrap.sh"
@@ -57,16 +130,41 @@
     group: "{{ dupwrap_group }}"
     mode: "0640"
 
+# Resolve dependencies during provisioning so an incompatible Python floor or
+# package pin fails immediately instead of at the next unattended backup.
+# Run unconditionally because the environment may drift independently of the
+# copied project file; uv sync is a no-op when it already matches.
+- name: "Resolve the uv project so dependency failures surface at provision time"
+  ansible.builtin.command:
+    cmd: "uv sync --project {{ dupwrap_share_prefix }}/dupwrap"
+  register: dupwrap_uv_sync
+  changed_when: >-
+    'Installed' in (dupwrap_uv_sync.stderr | default(''))
+    or 'Uninstalled' in (dupwrap_uv_sync.stderr | default(''))
+  failed_when: dupwrap_uv_sync.rc != 0
+
 - name: "Remove old nightly cronjob"
   ansible.builtin.file:
     path: "/etc/cron.d/dupwrap_backup"
     state: "absent"
 
+# With jitter at 0 (the default) this emits `@daily`, byte-identical to
+# what it always has. With a jitter window it emits `<n> 0 * * *`,
+# keeping the run inside the midnight hour but giving each profile its
+# own minute. special_time and minute/hour are mutually exclusive in
+# ansible.builtin.cron, hence the `omit` on whichever pair is unused.
+#
+# The window must be <= 60; the cron module rejects a minute above 59,
+# so an oversized window fails loudly at provision rather than silently.
 - name: "Set daily cronjob"
   ansible.builtin.cron:
     cron_file: "dupwrap-backup-{{ item.name }}"
     name: "YOLO nightly backup"
-    special_time: "daily"
+    special_time: "{{ 'daily' if dupwrap_backup_jitter | int == 0 else omit }}"
+    minute: >-
+      {{ omit if dupwrap_backup_jitter | int == 0
+         else (dupwrap_backup_jitter | int | random(seed=item.name ~ '-backup')) }}
+    hour: "{{ omit if dupwrap_backup_jitter | int == 0 else '0' }}"
     job: "bash -c '{{ dupwrap_bin_prefix }}/dupwrap {{ dupwrap_backup_action }} -p {{ item.name }} {{ dupwrap_cron_flags }}'"
     user: "{{ dupwrap_user }}"
     state: "{% if item.cron | default(dupwrap_cron) %}present\
@@ -74,14 +172,20 @@
   vars:
     dupwrap_backup_action: "{{ 'backup_verify' if (item.verify_after_backup | default(dupwrap_verify_after_backup) | bool) else 'backup' }}"
     dupwrap_cron_flags: "{{ '-v &>> ' ~ dupwrap_log_prefix ~ '/dupwrap.log' if dupwrap_cron_verbose else '-q' }}"
+    dupwrap_backup_jitter: "{{ item.backup_jitter_minutes | default(dupwrap_backup_jitter_minutes) }}"
   loop: "{{ dupwrap_backups }}"
 
+# Pass every cron field explicitly; omitted fields default to "*". Keep prune
+# far enough from the profile's backup to avoid archive-lock contention.
 - name: "Set cron backup prune"
   ansible.builtin.cron:
     cron_file: "dupwrap-prune-{{ item.name }}"
     name: "Prune old backups"
-    hour: "2"
-    weekday: "0"
+    minute: "{{ item.prune_minute | default(dupwrap_prune_minute_effective) }}"
+    hour: "{{ item.prune_hour | default(dupwrap_prune_hour) }}"
+    day: "{{ item.prune_day | default(dupwrap_prune_day) }}"
+    month: "{{ item.prune_month | default(dupwrap_prune_month) }}"
+    weekday: "{{ item.prune_weekday | default(dupwrap_prune_weekday) }}"
     job: >
       bash -c '{{ dupwrap_bin_prefix }}/dupwrap prune -p {{ item.name }}
       {% if dupwrap_cron_verbose -%}
@@ -91,6 +195,17 @@
     user: "{{ dupwrap_user }}"
     state: "{% if item.cron | default(dupwrap_cron) %}present\
     {% else %}absent{% endif %}"
+  vars:
+    dupwrap_prune_jitter: "{{ item.prune_jitter_minutes | default(dupwrap_prune_jitter_minutes) }}"
+    # The seed carries a '-prune' suffix where the backup task uses
+    # '-backup', so one profile's two jobs never derive the SAME minute.
+    # Seeding both on the bare profile name would place every profile's
+    # backup and prune on the identical minute of their respective hours
+    # -- which is the one collision that actually matters, since a
+    # profile's prune and its own backup do share an archive lockfile.
+    dupwrap_prune_minute_effective: >-
+      {{ dupwrap_prune_minute if dupwrap_prune_jitter | int == 0
+         else (dupwrap_prune_jitter | int | random(seed=item.name ~ '-prune')) }}
   loop: "{{ dupwrap_backups }}"
 
 - name: "Set cron backup verify"
@@ -102,6 +217,12 @@
     day: "{{ item.verify_day | default(dupwrap_verify_day) }}"
     month: "{{ item.verify_month | default(dupwrap_verify_month) }}"
     weekday: "{{ item.verify_weekday | default(dupwrap_verify_weekday) }}"
+    # Carries no include paths. The scope lives in the profile's
+    # .verify-include file, so this job line is identical for every profile
+    # whether scoped or not, and operator-supplied paths never enter a
+    # bash -c '...' wrapper where spaces and quotes would have to be fought.
+    # It also means backup_verify inherits the scope for free, since both
+    # actions read the same file.
     job: >-
       bash -c '{{ dupwrap_bin_prefix }}/dupwrap verify -p {{ item.name }}
       {{ "-v &>> " ~ dupwrap_log_prefix ~ "/dupwrap.log"
@@ -149,6 +270,27 @@
     mode: "0770"
   loop: "{{ dupwrap_helpers }}"
 
+- name: "Create backup logs if absent"
+  ansible.builtin.copy:
+    content: ""
+    dest: "{{ dupwrap_log_prefix }}/dupwrap-{{ item.name }}.log"
+    owner: "{{ dupwrap_user }}"
+    group: "{{ item.log_group | default(dupwrap_log_group) }}"
+    mode: "0640"
+    force: false
+  loop: "{{ dupwrap_backups }}"
+  when: item.state | default("present") == "present"
+
+- name: "Enforce backup log ownership and permissions"
+  ansible.builtin.file:
+    path: "{{ dupwrap_log_prefix }}/dupwrap-{{ item.name }}.log"
+    state: file
+    owner: "{{ dupwrap_user }}"
+    group: "{{ item.log_group | default(dupwrap_log_group) }}"
+    mode: "0640"
+  loop: "{{ dupwrap_backups }}"
+  when: item.state | default("present") == "present"
+
 - name: "Configure logrotate for backup logs"
   ansible.builtin.include_role:
     name: nickhammond.logrotate
@@ -161,7 +303,7 @@
           - missingok
           - rotate 4
           - compress
-          - "create 0640 {{ dupwrap_user }} {{ dupwrap_group }}"
+          - "create 0640 {{ dupwrap_user }} {{ item.log_group | default(dupwrap_log_group) }}"
   loop: "{{ dupwrap_backups }}"
 
 - name: "Remove old log file if present"

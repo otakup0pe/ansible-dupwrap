@@ -53,6 +53,13 @@ destination.
   verification immediately after each successful scheduled backup
 * `dupwrap_verify_day` defaults to `1`, `dupwrap_verify_hour` to `4`,
   and `dupwrap_verify_weekday` / `dupwrap_verify_month` to `*`
+* `dupwrap_verify_include` defaults to `[]`, meaning verification covers
+  the whole source tree. See "Scoped verification" below
+* `dupwrap_prune_minute` defaults to `0`, `dupwrap_prune_hour` to `2`,
+  `dupwrap_prune_weekday` to `0`, and `dupwrap_prune_day` /
+  `dupwrap_prune_month` to `*` -- weekly prune at 02:00 Sunday
+* `dupwrap_backup_jitter_minutes` and `dupwrap_prune_jitter_minutes`
+  both default to `0` (off). See "Jitter" below
 * `dupwrap_n_full` defaults to `3` and controls how many full backups
   to keep
 * `dupwrap_remove_older` defaults to `12` will remove backups older
@@ -78,21 +85,61 @@ For local filesystem backups, set destination to `local` and provide:
 
 * `local_path` is the filesystem path to store backups in
 
+### Scheduled prune
+
+Prune runs weekly at 02:00 Sunday by default. Profiles may override
+the schedule with `prune_minute`, `prune_hour`, `prune_day`,
+`prune_month`, and `prune_weekday`. Leave enough time after backup;
+duplicity will reject an overlapping prune with rc=23.
+
+### Jitter
+
+`backup_jitter_minutes` and `prune_jitter_minutes` spread profiles
+across a deterministic window. Their global equivalents both default
+to `0` (off). Jitter reduces simultaneous host load; use the prune
+schedule to prevent a profile's prune from overlapping its own backup.
+
 ### Scheduled verification
 
 Archive verification is opt-in per profile. Set `verify_cron: true` on
 a profile, or set `dupwrap_verify_cron: true` globally. A profile may
 override the global cadence with `verify_day`, `verify_weekday`,
-`verify_month`, and `verify_hour`. For example, a quarterly profile
-can use `verify_day: "1"` and `verify_month: "1,4,7,10"`. Cron treats
-day-of-month and weekday as an OR when both are restricted, so a
-weekly profile should set `verify_day: "*"` when it sets
-`verify_weekday`.
+`verify_month`, and `verify_hour`. Cron treats day-of-month and
+weekday as an OR when both are restricted.
 
 When metrics are enabled, successful verification updates
 `dupwrap_status{task="verify"}` and `dupwrap_time{task="verify"}`.
-Failures update the distinct `task="verify_error"` series so
-verification failures do not masquerade as backup failures.
+Failures use the distinct `task="verify_error"` series.
+
+### Scoped verification
+
+`verify_include` limits verification to relative paths inside the
+backup:
+
+```yaml
+dupwrap_backups:
+  - name: documents
+    directories:
+      - /srv/documents
+    verify_cron: true
+    verify_include:
+      - srv/documents/canary.txt
+      - srv/documents/manifest.json
+```
+
+Each path is verified separately, so keep the sample small. Paths must
+exist on the host; spaces and unicode are supported. An empty list
+verifies the whole source tree.
+
+Scoped verification proves that the selected files decrypt and match,
+not that the whole archive is readable. It also applies to the verify
+phase of `backup_verify`, but never narrows the backup itself.
+Missing paths, empty comparisons, and unreadable verification summaries
+fail the run.
+
+`dupwrap_verify_scope_paths` reports the configured sample size.
+`dupwrap_files_compared` and `dupwrap_files_differing` report the
+results.
 
 ## `dupwrap` script
 
@@ -110,6 +157,8 @@ will require a profile specified.
   stored. This defaults to whatever `dupwrap_config_prefix` is set to
 * `-p` specifies a backup profile.
 * `-t` specifies the time to restore from (duplicity time format)
+* `-i` may be repeated to restrict `verify` to relative archive
+  paths. It affects verification only
 
 ### Actions
 
@@ -122,7 +171,8 @@ will require a profile specified.
   * `restore_file <file> <dest>` to restore most recent
 * `restore` will restore an entire backup set to a destination
 * `status` basic information on the backup set
-* `verify` downloads, decrypts, and verifies a backup against the live source
+* `verify` downloads, decrypts, and verifies a backup against the live
+  source. `-i path` (repeatable) samples only those paths instead
 * `prune` will remove old backups. If no profile is specified then
   every found backup will be purged.
 * `clean` will clean up failed backup sets

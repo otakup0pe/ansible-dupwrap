@@ -5,6 +5,9 @@ dupwrap_config_prefix: /etc
 dupwrap_bin_prefix: /usr/local/bin
 dupwrap_share_prefix: /usr/local/share
 dupwrap_log_prefix: /var/log
+# May be widened independently for read-only observability without granting
+# access to configs, credentials, binaries, or the backup process itself.
+dupwrap_log_group: "{{ dupwrap_group }}"
 dupwrap_cron: false
 # Archive verification is opt-in because duplicity downloads the backup set.
 dupwrap_verify_cron: false
@@ -13,6 +16,25 @@ dupwrap_verify_day: "1"
 dupwrap_verify_weekday: "*"
 dupwrap_verify_month: "*"
 dupwrap_verify_hour: "4"
+# Optional relative archive paths for sampled verification. Each path gets its
+# own --path-to-restore invocation. Empty means full-tree verification.
+# Paths are stored one per line, so spaces and unicode need no shell escaping.
+dupwrap_verify_include: []
+# Every cron field is explicit: omitted fields default to "*", so omitting
+# minute while setting hour would run prune once per minute for that hour.
+dupwrap_prune_minute: "0"
+dupwrap_prune_hour: "2"
+# Spread co-located profiles across a deterministic per-profile window.
+# Zero preserves the historical schedule. Determinism keeps provisioning
+# idempotent; unseeded randomness would change the cron line on every run.
+#
+# Jitter spreads resource use between profiles. It cannot prevent a profile's
+# prune from colliding with its own backup; schedule those far enough apart.
+dupwrap_backup_jitter_minutes: 0
+dupwrap_prune_jitter_minutes: 0
+dupwrap_prune_day: "*"
+dupwrap_prune_month: "*"
+dupwrap_prune_weekday: "0"
 dupwrap_n_full: 3
 dupwrap_remove_older: 12M
 dupwrap_full_older: 30D

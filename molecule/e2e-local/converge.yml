@@ -19,11 +19,52 @@
         metrics: true
     dupwrap_metrics: false
     dupwrap_promtext_path: /tmp/dupwrap-promtext
+    dupwrap_log_group: dupwrap-log-readers
+
+  pre_tasks:
+    - name: Create dedicated dupwrap log reader group
+      ansible.builtin.group:
+        name: dupwrap-log-readers
+        system: true
 
   roles:
     - role: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
 
   tasks:
+    # Step 0: The emitted cron SCHEDULES, not just that cron files exist.
+    #
+    # ansible.builtin.cron defaults any OMITTED time field to "*". The prune
+    # task once set hour: "2" and left minute implicit, emitting "* 2 * * 0"
+    # -- 60 prunes across the 2 AM hour instead of one. cron: true was
+    # already exercised here and the suite still passed, because nothing
+    # looked at the schedule field. Assert the literal spec so a dropped
+    # field fails the test instead of the fleet.
+    - name: Read emitted cron files
+      ansible.builtin.slurp:
+        src: "/etc/cron.d/{{ item }}"
+      register: dupwrap_cron_files
+      loop:
+        - dupwrap-backup-e2e-test
+        - dupwrap-prune-e2e-test
+
+    - name: Verify prune is scheduled once weekly, not once per minute
+      ansible.builtin.assert:
+        that:
+          - >-
+            (dupwrap_cron_files.results[1].content | b64decode)
+            is regex('(?m)^0 2 \\* \\* 0\\s')
+          - >-
+            (dupwrap_cron_files.results[1].content | b64decode)
+            is not regex('(?m)^\\*')
+          - >-
+            (dupwrap_cron_files.results[0].content | b64decode)
+            is regex('(?m)^@daily\\s')
+        fail_msg: >-
+          Unexpected dupwrap cron schedule. prune must be "0 2 * * 0" and
+          backup "@daily"; a leading "*" in the minute field means a time
+          field was left implicit and the job will run every minute of its
+          hour.
+
     # Step 1: Run initial backup
     - name: Run initial backup and chained verification
       ansible.builtin.command: >-
@@ -174,6 +215,19 @@
             (verify_schedule_metric.content | b64decode)
             is regex('(?m)^dupwrap_verify_scheduled\\{backup_name="e2e-test"\\} 1$')
 
+    # 0 distinguishes a full verify from a sampled one. This profile sets no
+    # verify_include, so an operator reading dupwrap_status{task="verify"}
+    # for it is looking at whole-tree coverage.
+    - name: Verify the scope gauge reports full-tree verification
+      ansible.builtin.assert:
+        that:
+          - >-
+            (verify_schedule_metric.content | b64decode)
+            is regex('(?m)^dupwrap_verify_scope_paths\\{backup_name="e2e-test"\\} 0$')
+        fail_msg: >-
+          Missing or wrong scope gauge:
+          {{ verify_schedule_metric.content | b64decode }}
+
     - name: Run verify against latest backup
       ansible.builtin.command: >-
         dupwrap verify -p e2e-test -v
@@ -201,6 +255,759 @@
             is regex('(?m)^dupwrap_time\\{task="verify", backup_name="e2e-test"\\} [0-9]+$')
           - >-
             'task="verify_error"' not in (verify_metrics.content | b64decode)
+
+    # The full verify above must still cover every source directory. This is
+    # the fallback path -- the one every profile that sets no verify_include
+    # takes -- so assert the include set rather than trusting rc=0, which an
+    # empty include set would also produce.
+    - name: Verify an unscoped run includes the whole source tree
+      ansible.builtin.assert:
+        that:
+          - "'--include /tmp/test-data/documents' in verify_result.stderr"
+          - "'--include /tmp/test-data/photos' in verify_result.stderr"
+          - "'--include /tmp/test-data/config' in verify_result.stderr"
+        fail_msg: "Unscoped verify did not include all sources: {{ verify_result.stderr }}"
+
+    # ---------------------------------------------------------------
+    # FINDING 2026-10-02, measured on duplicity 3.0.7: verify IGNORES
+    # --include and --include-filelist. A full-tree verify, a verify scoped
+    # to one real file, one real directory, and one path that is not in the
+    # archive at all ALL reported the same 13 file(s) compared. `verify
+    # --help` lists --path-to-restore and no include/exclude options. So the
+    # scope was inert: it cost a full download and proved nothing it claimed.
+    #
+    # FIXED 2026-10-03 by scoping through --path-to-restore instead, which
+    # does narrow -- 13 -> 1. It addresses ONE archive entry per invocation,
+    # so dupwrap now runs duplicity once per scope path and sums the counts.
+    #
+    # ⚠️ THIS IS THE REGRESSION TEST FOR THE WHOLE FEATURE. If narrowing ever
+    # stops working, a scoped verify silently downloads and decrypts the
+    # entire archive again. An inert scope still exits 0, so these counts are
+    # the only signal that narrowing regressed.
+    - name: Measure whether the scope narrows a verify
+      ansible.builtin.shell: |
+        set +e
+        count() {
+          : > /var/log/dupwrap-e2e-test.log
+          "$@" >/dev/null 2>&1
+          grep -oE 'Verify complete: [0-9]+ file\(s\) compared' \
+            /var/log/dupwrap-e2e-test.log | tail -1 | grep -oE '[0-9]+'
+        }
+        echo "full=$(count dupwrap verify -p e2e-test -q)"
+        echo "scoped=$(count dupwrap verify -p e2e-test -q \
+          -i 'tmp/test-data/config/sample doc with spaces.pdf')"
+        echo "refused=$(count dupwrap verify -p e2e-test -q \
+          -i tmp/test-data/config/definitely-not-in-the-archive.pdf)"
+      register: scope_narrowing
+      changed_when: false
+
+    # Anchored regexes, not substring tests: 'scoped=13' CONTAINS 'scoped=1',
+    # so the obvious `in` test would pass on exactly the regression this
+    # exists to catch.
+    #
+    # ⚠️ THE THIRD LEG CHANGED MEANING 2026-10-03. It used to run a path that
+    # is in neither the archive nor the filesystem and assert only "not 13",
+    # because such a path compares the restore root alone -- 1 file(s)
+    # compared, exit 0 -- which the zero-compared guard cannot see. That
+    # vacuous pass is now REFUSED by scope_local_present before duplicity is
+    # invoked, so the count is EMPTY rather than 1: no invocation, no
+    # summary. Asserting the empty string is what pins that the refusal
+    # happens before the archive round trip instead of after it. The refusal
+    # itself -- message, exit code, metrics -- is covered further down by the
+    # both-absent cases.
+    - name: Pin that --path-to-restore narrows verify under this duplicity
+      ansible.builtin.assert:
+        that:
+          - "scope_narrowing.stdout is regex('(?m)^full=13$')"
+          - "scope_narrowing.stdout is regex('(?m)^scoped=1$')"
+          - "scope_narrowing.stdout is regex('(?m)^refused=$')"
+        fail_msg: >-
+          Scoping no longer narrows verify on this duplicity:
+          {{ scope_narrowing.stdout }}. A full tree is 13 files and a
+          one-path scope must compare 1. If a scoped run is back to 13 then
+          every scoped profile has quietly resumed downloading its entire
+          archive, and dupwrap's scope handling needs revisiting -- see the
+          2026-10-02 finding above for what that regression looks like. A
+          non-empty refused= means a scope path with no local counterpart
+          reached duplicity, which costs a round trip to prove nothing.
+        success_msg: >-
+          Confirmed: --path-to-restore narrows verify from 13 files to 1,
+          and a path with no local counterpart never reaches duplicity.
+
+    # ---------------------------------------------------------------
+    # A verify that compared nothing must FAIL. duplicity exits 0 after
+    # comparing zero files, so left unchecked such a verify would be green
+    # forever -- worse than no verification, because "never ran" is visible
+    # and "ran and proved nothing" is not.
+    # ---------------------------------------------------------------
+
+    # The real path, verbose: a genuine comparison reports a non-zero count.
+    - name: Run a scoped verify whose path is really in the archive
+      ansible.builtin.command:
+        argv:
+          - dupwrap
+          - verify
+          - -p
+          - e2e-test
+          - -i
+          - "tmp/test-data/config/sample doc with spaces.pdf"
+          - -v
+      register: compared_ok
+
+    - name: Read metrics after a real comparison
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+      register: compared_ok_metrics
+
+    - name: Verify a real comparison succeeds and reports a non-zero count
+      ansible.builtin.assert:
+        that:
+          - compared_ok.rc == 0
+          - "'file(s) compared' in compared_ok.stdout"
+          - >-
+            (compared_ok_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_files_compared\\{task="verify", backup_name="e2e-test"\\} [1-9][0-9]*$')
+        fail_msg: >-
+          Expected a non-zero compared count.
+          rc={{ compared_ok.rc }} stdout={{ compared_ok.stdout }}
+
+    # The zero-compared case STILL cannot be produced through the scope, even
+    # now that the scope narrows. A path in neither the archive nor the
+    # filesystem compares the restore root alone: 1 file, 0 differences,
+    # exit 0. So the check is driven against a stubbed duplicity, which is
+    # what actually exercises the code written here: the per-run parser, the
+    # aggregation, the hard failure, and the error metrics. Same uv-shim
+    # pattern as the logging tests at the end of this play.
+    #
+    # These runs are deliberately UNSCOPED, so the stub is called once and
+    # the summary it prints is the whole aggregate. That keeps the threshold
+    # under test -- total compared, and a missing summary -- rather than the
+    # loop around it, which the two-path scope below covers.
+    - name: "zero-compared: create stub directory"
+      ansible.builtin.file:
+        path: /tmp/dupwrap-verify-shim
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Keys its summary off the --path-to-restore argument rather than
+    # counting invocations, so the multi-path cases below can give one path a
+    # different answer from another with no state to reset between runs and
+    # no way to drift out of step with dupwrap's loop. Any path containing
+    # "empty" gets the zero-compared summary; everything else, including an
+    # unscoped run with no --path-to-restore at all, gets the default.
+    - name: "zero-compared: install a duplicity stub with a settable summary"
+      ansible.builtin.copy:
+        dest: /tmp/dupwrap-verify-shim/uv
+        content: |
+          #!/bin/sh
+          want=""
+          while [ "$#" -gt 0 ] ; do
+            if [ "$1" = "--path-to-restore" ] ; then
+              want="$2"
+              break
+            fi
+            shift
+          done
+          case "$want" in
+            *empty*)
+              printf '%s\n' \
+                "Verify complete: 0 file(s) compared, 0 difference(s) found."
+              ;;
+            *)
+              printf '%s\n' "$DUPWRAP_TEST_SUMMARY"
+              ;;
+          esac
+          exit 0
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Healthy baseline through the stub, and proof the parser reads the real
+    # number rather than merely detecting the line.
+    - name: "zero-compared: stubbed verify reporting seven files compared"
+      ansible.builtin.command: dupwrap verify -p e2e-test -q
+      environment:
+        PATH: "/tmp/dupwrap-verify-shim:{{ ansible_env.PATH }}"
+        DUPWRAP_TEST_SUMMARY: "Verify complete: 7 file(s) compared, 0 difference(s) found."
+      register: stub_seven
+      changed_when: false
+
+    - name: "zero-compared: read metrics after the seven-file comparison"
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+      register: stub_seven_metrics
+
+    - name: "zero-compared: a non-zero count passes and is recorded exactly"
+      ansible.builtin.assert:
+        that:
+          - stub_seven.rc == 0
+          - >-
+            (stub_seven_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_files_compared\\{task="verify", backup_name="e2e-test"\\} 7$')
+        fail_msg: >-
+          Expected a parsed count of exactly 7.
+          rc={{ stub_seven.rc }}
+
+    # Verbose: zero compared must be a hard failure with the error metrics.
+    - name: "zero-compared: stubbed verify reporting zero files compared"
+      ansible.builtin.command: dupwrap verify -p e2e-test -v
+      environment:
+        PATH: "/tmp/dupwrap-verify-shim:{{ ansible_env.PATH }}"
+        DUPWRAP_TEST_SUMMARY: "Verify complete: 0 file(s) compared, 0 difference(s) found."
+      register: stub_zero
+      failed_when: false
+      changed_when: false
+
+    - name: "zero-compared: read metrics after the empty comparison"
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+      register: stub_zero_metrics
+
+    - name: "zero-compared: an empty comparison fails and writes verify_error"
+      ansible.builtin.assert:
+        that:
+          - stub_zero.rc != 0
+          - "'compared 0 files' in stub_zero.stderr"
+          - >-
+            (stub_zero_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_status\\{task="verify_error", backup_name="e2e-test"\\} [0-9]+$')
+          - >-
+            (stub_zero_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_time\\{task="verify_error", backup_name="e2e-test"\\} [0-9]+$')
+        fail_msg: >-
+          A verify that compared nothing was not caught, so it would alert
+          green. rc={{ stub_zero.rc }} stderr={{ stub_zero.stderr }}
+
+    # cron runs -q, and duplicity suppresses its summary at that verbosity --
+    # measured, see the verbosity floor in exec_dup. If that floor regressed
+    # the check would be inert under exactly the flags cron uses, so the
+    # quiet path is asserted separately rather than assumed from the verbose.
+    - name: "zero-compared: cron-equivalent quiet verify reporting zero"
+      ansible.builtin.command: dupwrap verify -p e2e-test -q
+      environment:
+        PATH: "/tmp/dupwrap-verify-shim:{{ ansible_env.PATH }}"
+        DUPWRAP_TEST_SUMMARY: "Verify complete: 0 file(s) compared, 0 difference(s) found."
+      register: stub_zero_quiet
+      failed_when: false
+      changed_when: false
+
+    - name: "zero-compared: quiet mode enforces the count just as verbose does"
+      ansible.builtin.assert:
+        that:
+          - stub_zero_quiet.rc != 0
+          - "'compared 0 files' in stub_zero_quiet.stderr"
+        fail_msg: >-
+          Quiet mode does not enforce the compared count, so the cron path is
+          unprotected. rc={{ stub_zero_quiet.rc }}
+          stderr={{ stub_zero_quiet.stderr }}
+
+    # An unreadable summary must also fail: on no evidence, success must not
+    # be claimed. This is what makes a future duplicity that renames the line
+    # fail loudly instead of silently disarming the check.
+    - name: "zero-compared: stubbed verify emitting no parseable summary"
+      ansible.builtin.command: dupwrap verify -p e2e-test -q
+      environment:
+        PATH: "/tmp/dupwrap-verify-shim:{{ ansible_env.PATH }}"
+        DUPWRAP_TEST_SUMMARY: "duplicity finished but said nothing parseable"
+      register: stub_unparseable
+      failed_when: false
+      changed_when: false
+
+    - name: "zero-compared: an unreadable summary is a failure, not a pass"
+      ansible.builtin.assert:
+        that:
+          - stub_unparseable.rc != 0
+          - "'could not read duplicity' in stub_unparseable.stderr"
+        fail_msg: >-
+          A verify with no parseable summary reported success.
+          rc={{ stub_unparseable.rc }} stderr={{ stub_unparseable.stderr }}
+
+    # ---------------------------------------------------------------
+    # N-run aggregation. --path-to-restore takes ONE path, so a scope of N
+    # paths is N duplicity invocations and dupwrap must SUM their counts.
+    # Real duplicity would compare 1 per path here, which is too weak to
+    # distinguish a sum from a last-wins read; the stub reports 7 per
+    # invocation so 14 can only come from adding them up.
+    #
+    # ⚠️ THESE FILES HAVE TO EXIST, added 2026-10-03. The stub intercepts
+    # duplicity entirely, so nothing here ever reads their contents -- but
+    # dupwrap now REFUSES a scope path whose local counterpart is absent
+    # (scope_local_present), and these three paths were purely synthetic. The
+    # aggregation cases below went red the moment that guard landed, which is
+    # the guard working: /tmp/stub/... was never on the filesystem, so a real
+    # run of that scope would have compared nothing but the restore root and
+    # exited 0. Creating the counterparts is the fix. Loosening the guard to
+    # tolerate them is NOT -- it would reopen the exact hole.
+    # ---------------------------------------------------------------
+    - name: "aggregation: create the local counterparts of the stub scope"
+      ansible.builtin.file:
+        path: /tmp/stub
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "aggregation: the stub scope paths must exist locally to be compared"
+      ansible.builtin.copy:
+        content: "Not a PDF. Local counterpart for a stubbed scope path."
+        dest: "{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - "/tmp/stub/first file.pdf"
+        - "/tmp/stub/second ‑ 知らない.pdf"
+        - "/tmp/stub/empty path.pdf"
+
+    - name: "aggregation: two-path scope through the stub"
+      ansible.builtin.command:
+        argv:
+          - dupwrap
+          - verify
+          - -p
+          - e2e-test
+          - -i
+          - "tmp/stub/first file.pdf"
+          - -i
+          - "tmp/stub/second ‑ 知らない.pdf"
+          - -q
+      environment:
+        PATH: "/tmp/dupwrap-verify-shim:{{ ansible_env.PATH }}"
+        DUPWRAP_TEST_SUMMARY: "Verify complete: 7 file(s) compared, 0 difference(s) found."
+      register: stub_two_paths
+      changed_when: false
+
+    - name: "aggregation: read metrics after the two-path scope"
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+      register: stub_two_paths_metrics
+
+    - name: "aggregation: the compared count is the SUM across invocations"
+      ansible.builtin.assert:
+        that:
+          - stub_two_paths.rc == 0
+          - >-
+            (stub_two_paths_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_files_compared\\{task="verify", backup_name="e2e-test"\\} 14$')
+        fail_msg: >-
+          Expected 7 + 7 = 14 files compared. A 7 means only one
+          invocation's summary was read, so a scope of ten paths would report
+          the coverage of one. rc={{ stub_two_paths.rc }}
+
+    # A path that compares nothing must fail the verify even when the OTHER
+    # paths carry the total clear of zero -- that path contributed no
+    # evidence, and a sum is exactly the thing that would hide it. Without
+    # this, a ten-path scope could rot down to one working path and still
+    # report a healthy verify.
+    - name: "aggregation: one path of two compares nothing"
+      ansible.builtin.command:
+        argv:
+          - dupwrap
+          - verify
+          - -p
+          - e2e-test
+          - -i
+          - "tmp/stub/first file.pdf"
+          - -i
+          - "tmp/stub/empty path.pdf"
+          - -v
+      environment:
+        PATH: "/tmp/dupwrap-verify-shim:{{ ansible_env.PATH }}"
+        DUPWRAP_TEST_SUMMARY: "Verify complete: 7 file(s) compared, 0 difference(s) found."
+      register: stub_one_empty
+      failed_when: false
+      changed_when: false
+
+    - name: "aggregation: read metrics after the partially empty scope"
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+      register: stub_one_empty_metrics
+
+    - name: "aggregation: a single empty path fails and is named"
+      ansible.builtin.assert:
+        that:
+          - stub_one_empty.rc != 0
+          - "'compared 0 files' in stub_one_empty.stderr"
+          - "'tmp/stub/empty path.pdf' in stub_one_empty.stderr"
+          - >-
+            (stub_one_empty_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_status\\{task="verify_error", backup_name="e2e-test"\\} [0-9]+$')
+          - >-
+            (stub_one_empty_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_files_compared\\{task="verify", backup_name="e2e-test"\\} 7$')
+        fail_msg: >-
+          A scope path that compared nothing was absorbed by the total, so a
+          decaying scope would keep alerting green.
+          rc={{ stub_one_empty.rc }} stderr={{ stub_one_empty.stderr }}
+
+    - name: "zero-compared: remove the stub so later steps use real duplicity"
+      ansible.builtin.file:
+        path: /tmp/dupwrap-verify-shim
+        state: absent
+
+    # The stub above cannot prove this, since it never runs duplicity. REAL
+    # duplicity emits the summary at notice and hides it at warning, so this
+    # is what actually demonstrates the verbosity floor works: truncate the
+    # log, run a genuine quiet verify, and require the summary to be there.
+    - name: "quiet floor: truncate the profile log"
+      ansible.builtin.copy:
+        content: ""
+        dest: /var/log/dupwrap-e2e-test.log
+        owner: root
+        group: dupwrap-log-readers
+        mode: "0640"
+
+    - name: "quiet floor: run a real quiet verify"
+      ansible.builtin.command: dupwrap verify -p e2e-test -q
+      changed_when: false
+
+    - name: "quiet floor: count summary lines produced under -q"
+      ansible.builtin.shell: >-
+        grep -c 'file(s) compared' /var/log/dupwrap-e2e-test.log
+      register: quiet_summary_lines
+      changed_when: false
+
+    - name: "quiet floor: real duplicity's summary survives -q"
+      ansible.builtin.assert:
+        that:
+          - quiet_summary_lines.stdout | int > 0
+        fail_msg: >-
+          No compared-count summary in the profile log after a quiet verify.
+          duplicity hides it at warning verbosity, so the floor in exec_dup
+          has regressed and the zero-compared check is inert under cron.
+
+    # Pin the flag name against the duplicity version actually installed.
+    # dupwrap depends on --path-to-restore existing ON VERIFY; if a future
+    # pin renames it or drops it from this subcommand, scoped verification
+    # would break for every profile at once, and the symptom would be a
+    # failing cron job rather than anything obvious.
+    #
+    # `verify --help` rather than the global help on purpose: the per-command
+    # help is what showed, on 2026-10-02, that verify offers --path-to-restore
+    # and NO include/exclude options at all. The global help lists everything
+    # duplicity has ever accepted and so proves nothing about verify.
+    - name: Check the pinned duplicity advertises --path-to-restore on verify
+      ansible.builtin.command: >-
+        uv run --project /usr/local/share/dupwrap duplicity verify --help
+      register: duplicity_verify_help
+      changed_when: false
+
+    - name: Verify the path-to-restore option exists on this duplicity's verify
+      ansible.builtin.assert:
+        that:
+          - "'--path-to-restore' in duplicity_verify_help.stdout"
+        fail_msg: >-
+          This duplicity's verify does not offer --path-to-restore. dupwrap's
+          scoped verify depends on it; check the pin in files/pyproject.toml.
+
+    # Step 6b-2: Scoped verify, via --path-to-restore, against REAL
+    # duplicity. Cheap to exercise here -- same archive, two small files
+    # instead of the tree -- and it is the path that makes verification
+    # affordable enough to schedule on a large profile. Both awkward names go
+    # through at once: two spaces in one, non-ASCII in the other. Each is its
+    # own argv element in its own duplicity invocation, so this is where the
+    # quoting either works or does not.
+    - name: Run scoped verify against awkwardly named files
+      ansible.builtin.command:
+        argv:
+          - dupwrap
+          - verify
+          - -p
+          - e2e-test
+          - -i
+          - "tmp/test-data/config/sample doc with spaces.pdf"
+          - -i
+          - "tmp/test-data/config/naïve ‑ 知らない.pdf"
+          - -v
+      register: scoped_verify_result
+
+    # The argv of every invocation is logged by exec_dup at -v, so the two
+    # paths are asserted whole -- spaces, unicode and all. A truncated or
+    # re-split path would show up here rather than as a mysterious count.
+    - name: Verify the scoped run used one --path-to-restore per path
+      ansible.builtin.assert:
+        that:
+          - scoped_verify_result.rc == 0
+          - >-
+            '--path-to-restore tmp/test-data/config/sample doc with spaces.pdf'
+            in scoped_verify_result.stderr
+          - >-
+            '--path-to-restore tmp/test-data/config/naïve ‑ 知らない.pdf'
+            in scoped_verify_result.stderr
+          - "'--include /tmp/test-data/documents' not in scoped_verify_result.stderr"
+          - "'--include /tmp/test-data/photos' not in scoped_verify_result.stderr"
+        fail_msg: >-
+          Scoped verify did not use --path-to-restore per path:
+          {{ scoped_verify_result.stderr }}
+
+    - name: Read scoped verify metrics
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+      register: scoped_verify_metrics
+
+    # Asserts the compared count rather than the absence of verify_error. The
+    # empty-comparison tests above deliberately leave a verify_error series
+    # behind, and prom_write only ever updates in place, so absence is not
+    # available here -- but the count is the stronger claim anyway: it says
+    # this run actually examined files.
+    #
+    # EXACTLY 2, against real duplicity: one entry per path, two paths, two
+    # invocations, summed. A 1 would mean the metric describes only the last
+    # invocation; a 26 would mean the scope was discarded and the whole tree
+    # walked twice.
+    - name: Verify a scoped run sums the compared count across its invocations
+      ansible.builtin.assert:
+        that:
+          - >-
+            (scoped_verify_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_time\\{task="verify", backup_name="e2e-test"\\} [0-9]+$')
+          - >-
+            (scoped_verify_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_files_compared\\{task="verify", backup_name="e2e-test"\\} 2$')
+        fail_msg: >-
+          Expected 1 + 1 = 2 files compared across the two scoped
+          invocations: {{ scoped_verify_metrics.content | b64decode }}
+
+    # Step 6b-3: the configured scope, which is what cron actually uses. The
+    # cron job passes no paths at all, so this is the only path that proves
+    # the file written by the role reaches duplicity intact.
+    - name: Write a profile include list by hand, as the role would
+      ansible.builtin.copy:
+        dest: /etc/dupwrap/e2e-test.verify-include
+        content: |
+          tmp/test-data/config/sample doc with spaces.pdf
+          tmp/test-data/config/naïve ‑ 知らない.pdf
+        owner: root
+        group: root
+        mode: "0640"
+
+    - name: Run verify with no arguments beyond the profile
+      ansible.builtin.command: dupwrap verify -p e2e-test -v
+      register: configured_scope_result
+
+    # The file is READ by dupwrap now rather than handed to duplicity, so the
+    # thing to prove is that each line came back out as its own
+    # --path-to-restore with every byte intact -- which is also the only
+    # proof that the role-written file and the -i flag land in the same code
+    # path.
+    - name: Verify the configured scope was honoured without any -i
+      ansible.builtin.assert:
+        that:
+          - configured_scope_result.rc == 0
+          - >-
+            '--path-to-restore tmp/test-data/config/sample doc with spaces.pdf'
+            in configured_scope_result.stderr
+          - >-
+            '--path-to-restore tmp/test-data/config/naïve ‑ 知らない.pdf'
+            in configured_scope_result.stderr
+          - "'--include /tmp/test-data/documents' not in configured_scope_result.stderr"
+        fail_msg: >-
+          Configured scope ignored or wrong:
+          {{ configured_scope_result.stderr }}
+
+    # Removing the file is what turns scoping off again, so prove it does.
+    - name: Remove the include list
+      ansible.builtin.file:
+        path: /etc/dupwrap/e2e-test.verify-include
+        state: absent
+
+    - name: Run verify after removing the include list
+      ansible.builtin.command: dupwrap verify -p e2e-test -v
+      register: unscoped_again_result
+
+    - name: Verify removing the list restores full-tree verification
+      ansible.builtin.assert:
+        that:
+          - unscoped_again_result.rc == 0
+          - "'--path-to-restore' not in unscoped_again_result.stderr"
+          - "'--include /tmp/test-data/documents' in unscoped_again_result.stderr"
+        fail_msg: >-
+          Scope survived removal of its include list:
+          {{ unscoped_again_result.stderr }}
+
+    # The script's own refusal branch, independent of the role's assert --
+    # an ad-hoc -i bypasses ansible entirely.
+    #
+    # ⚠️ INVERTED 2026-10-03 with the path semantics: this case used to feed
+    # a RELATIVE path and demand a refusal, because the scope went to
+    # duplicity as --include-filelist against an archive rooted at /. Under
+    # --path-to-restore the relative form is the correct one, so the absolute
+    # path is what has to be refused.
+    - name: Run verify with an absolute include path
+      ansible.builtin.command:
+        argv:
+          - dupwrap
+          - verify
+          - -p
+          - e2e-test
+          - -i
+          - "/tmp/test-data/config/sample doc with spaces.pdf"
+      register: absolute_include_result
+      failed_when: false
+      changed_when: false
+
+    - name: Verify an absolute include path is refused, not silently retargeted
+      ansible.builtin.assert:
+        that:
+          - absolute_include_result.rc != 0
+          - "'must be relative' in absolute_include_result.stderr"
+        fail_msg: >-
+          An absolute include path was not refused, so a scoped verify could
+          be aimed at an archive entry nobody named.
+          rc={{ absolute_include_result.rc }}
+          stderr={{ absolute_include_result.stderr }}
+
+    # ---------------------------------------------------------------
+    # A scope path absent on BOTH sides must be refused. Added 2026-10-03.
+    #
+    # MEASURED on duplicity 3.0.7: --path-to-restore naming something in
+    # neither the archive NOR the local filesystem reports
+    # "Verify complete: 1 file(s) compared, 0 difference(s) found." and exits
+    # 0. The restore root is that one entry and both sides agree it is not
+    # there, so they "match". The count is 1, NOT 0, so neither threshold in
+    # assert_files_compared can see it: the verify passes VACUOUSLY. This is
+    # a DIFFERENT case from the zero-compared one and neither guard covers
+    # the other -- only one of them has a zero in it.
+    #
+    # ⚠️ INVERTED-REFUSAL SHAPE, the same one the absolute-path case above
+    # uses: the behaviour under test is a FAILURE, so rc == 0 is the
+    # regression. Remove the guard in scope_local_present and the first
+    # assertion below goes red on the next run -- before the guard, this
+    # exact command exited 0.
+    #
+    # Why it is worth a test: a scope can be GENERATED -- one path per repo,
+    # per dataset, per mount -- and such a list churns. A repo dropped from
+    # the host but left in the list, or a typo'd name, is absent on both
+    # sides, and the verified sample would silently shrink with no signal
+    # anywhere. That is precisely what scoped verification exists to prevent.
+    # ---------------------------------------------------------------
+    - name: "both-absent: clear metrics so the error routing is unambiguous"
+      ansible.builtin.file:
+        path: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+        state: absent
+
+    - name: "both-absent: verify a scope path that is in neither place"
+      ansible.builtin.command:
+        argv:
+          - dupwrap
+          - verify
+          - -p
+          - e2e-test
+          - -i
+          - tmp/test-data/config/definitely-not-in-the-archive.pdf
+          - -v
+      register: both_absent
+      failed_when: false
+      changed_when: false
+
+    - name: "both-absent: read metrics after the refusal"
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+      register: both_absent_metrics
+
+    # Four separate claims, because "it failed" is not enough:
+    #   * it failed at all -- the vacuous pass is gone;
+    #   * the offending path is NAMED, so an operator reading an alert on a
+    #     generated multi-path scope does not require guesswork;
+    #   * it is labelled a CONFIGURATION error, because the action is to fix
+    #     the scope, not to restore the archive -- it must not read like a
+    #     difference or a count problem;
+    #   * duplicity was never invoked for it, so the refusal costs no archive
+    #     round trip.
+    - name: "both-absent: the refusal is loud, names the path, blames the scope"
+      ansible.builtin.assert:
+        that:
+          - both_absent.rc != 0
+          - >-
+            'tmp/test-data/config/definitely-not-in-the-archive.pdf'
+            in both_absent.stderr
+          - "'SCOPE CONFIGURATION ERROR' in both_absent.stderr"
+          - "'does not exist on this host' in both_absent.stderr"
+          - "'--path-to-restore' not in both_absent.stderr"
+          - >-
+            (both_absent_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_status\\{task="verify_error", backup_name="e2e-test"\\} [0-9]+$')
+          - >-
+            (both_absent_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_time\\{task="verify_error", backup_name="e2e-test"\\} [0-9]+$')
+          - >-
+            (both_absent_metrics.content | b64decode)
+            is not regex('(?m)^dupwrap_status\\{task="verify", backup_name="e2e-test"\\}')
+          - >-
+            (both_absent_metrics.content | b64decode)
+            is not regex('(?m)^dupwrap_time\\{task="verify", backup_name="e2e-test"\\}')
+        fail_msg: >-
+          A scope path absent from both the archive and the filesystem did
+          not fail the verify, or failed without saying which path and why.
+          duplicity reports 1 file(s) compared and exits 0 for such a path,
+          so this run would alert green having proved nothing -- the hole
+          the compared-count guard cannot cover.
+          rc={{ both_absent.rc }} stderr={{ both_absent.stderr }}
+        success_msg: >-
+          Confirmed: a both-absent scope path is refused by name, as a
+          configuration error, without invoking duplicity.
+
+    # NO SHORT-CIRCUIT of the loop, same convention as a missing summary on
+    # path 2 of 3: the remaining paths still run and the failure is raised
+    # once at the end, by assert_files_compared, which stays the only place
+    # that writes verify metrics. So the good path's count is published and
+    # the success series still is not.
+    - name: "both-absent: clear metrics before the mixed scope"
+      ansible.builtin.file:
+        path: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+        state: absent
+
+    - name: "both-absent: a scope mixing a real path with a missing one"
+      ansible.builtin.command:
+        argv:
+          - dupwrap
+          - verify
+          - -p
+          - e2e-test
+          - -i
+          - "tmp/test-data/config/sample doc with spaces.pdf"
+          - -i
+          - tmp/test-data/config/definitely-not-in-the-archive.pdf
+          - -v
+      register: mixed_absent
+      failed_when: false
+      changed_when: false
+
+    - name: "both-absent: read metrics after the mixed scope"
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+      register: mixed_absent_metrics
+
+    - name: "both-absent: the good path still ran and the verify still failed"
+      ansible.builtin.assert:
+        that:
+          - mixed_absent.rc != 0
+          - >-
+            'tmp/test-data/config/definitely-not-in-the-archive.pdf'
+            in mixed_absent.stderr
+          - >-
+            '--path-to-restore tmp/test-data/config/sample doc with spaces.pdf'
+            in mixed_absent.stderr
+          - >-
+            '--path-to-restore tmp/test-data/config/definitely-not-in-the-archive.pdf'
+            not in mixed_absent.stderr
+          - >-
+            (mixed_absent_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_files_compared\\{task="verify", backup_name="e2e-test"\\} 1$')
+          - >-
+            (mixed_absent_metrics.content | b64decode)
+            is regex('(?m)^dupwrap_status\\{task="verify_error", backup_name="e2e-test"\\} [0-9]+$')
+          - >-
+            (mixed_absent_metrics.content | b64decode)
+            is not regex('(?m)^dupwrap_status\\{task="verify", backup_name="e2e-test"\\}')
+        fail_msg: >-
+          A mixed scope did not behave as specified. It must run the real
+          path (so one path's absence cannot skip the rest), publish that
+          path's compared count, name the missing path, and still exit
+          non-zero with the success series unwritten.
+          rc={{ mixed_absent.rc }} stderr={{ mixed_absent.stderr }}
 
     # Step 6c: Verify with --time (verify against initial full backup)
     - name: Get timestamp of initial backup

@@ -1,0 +1,3 @@
+{% for path in (item.verify_include | default(dupwrap_verify_include)) %}
+{{ path }}
+{% endfor %}

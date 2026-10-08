@@ -5,6 +5,16 @@ SOURCE="{{ item.directories|join(' ') }}"
 DESTINATION="{{ item.destination }}"
 # Script configuration. Name is self referential
 LOG_DIRECTORY="{{ item.dupwrap_log_prefix|default(dupwrap_log_prefix) }}"
+LOG_GROUP="{{ item.log_group | default(dupwrap_log_group) }}"
+# Paths for a scoped verify, one per line, each RELATIVE to the backup root.
+# dupwrap reads this file and runs one `duplicity verify --path-to-restore`
+# per path; absent or empty means verify covers all of SOURCE.
+#
+# A separate file rather than a list in this one, because this file is
+# SOURCED by bash: a real path here carries spaces, unicode, a quote, an & and
+# a $, none of which survive that intact. SOURCE has the same problem from the
+# other direction, being space-joined.
+VERIFY_INCLUDE_FILE="{{ dupwrap_config_prefix }}/dupwrap/{{ item.name }}.verify-include"
 NAME="{{item.name}}"
 # Hooks!
 PRE_SCRIPT="{{ item.pre_script|default('') }}"

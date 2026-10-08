@@ -17,6 +17,20 @@
           - dupwrap_bin.stat.executable
         fail_msg: "dupwrap binary not found"
 
+    - name: Read backup log metadata
+      ansible.builtin.stat:
+        path: /var/log/dupwrap-e2e-test.log
+      register: dupwrap_log
+
+    - name: Assert backup log has narrow reader-group access
+      ansible.builtin.assert:
+        that:
+          - dupwrap_log.stat.exists
+          - dupwrap_log.stat.pw_name == "root"
+          - dupwrap_log.stat.gr_name == "dupwrap-log-readers"
+          - dupwrap_log.stat.mode == "0640"
+        fail_msg: "Unexpected backup log metadata: {{ dupwrap_log.stat }}"
+
     - name: Verify backup destination has data
       ansible.builtin.find:
         paths: /tmp/test-backup

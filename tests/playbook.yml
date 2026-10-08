@@ -25,5 +25,21 @@
         passphrase: molecule-verify-disabled
         cron: false
         verify_cron: false
+      # Synthetic awkward paths exercise spaces, unicode, quotes, and shell
+      # metacharacters. They stay relative because --path-to-restore addresses
+      # entries inside the archive.
+      - name: verify-scoped
+        destination: local
+        local_path: /tmp/dupwrap-verify-scoped
+        directories:
+          - /tmp
+        passphrase: molecule-verify-scoped
+        cron: true
+        verify_cron: true
+        verify_after_backup: true
+        verify_include:
+          - "fixtures/two  spaces.pdf"
+          - "fixtures/report & notes$.txt"
+          - "mnt/data/知らない/naïve ‑ quote'd & $PATH.pdf"
   roles:
     - role: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"

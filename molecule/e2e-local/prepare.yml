@@ -62,6 +62,16 @@
             test_key: test_value
             nested:
               key: value
+        # Scoped verification targets human document paths, so the archive
+        # needs some. Two spaces in the first name and non-ASCII in the
+        # second: a suite that only ever backed up space-free ASCII names
+        # would pass while the real configuration was broken. Kept in
+        # config/ because the auto-restore steps below empty documents/ and
+        # delete photos/, and these need to stay put.
+        - path: "/tmp/test-data/config/sample doc with spaces.pdf"
+          content: "Not a PDF. Named after a real operator path with spaces."
+        - path: "/tmp/test-data/config/naïve ‑ 知らない.pdf"
+          content: "Not a PDF. Named to exercise non-ASCII include paths."
 
     - name: Record checksums of test files
       ansible.builtin.shell: |

@@ -8,3 +8,21 @@
 dupwrap_verify_scheduled{backup_name={{ backup.name | to_json }}} 1
 {% endif %}
 {% endfor %}
+{# A scoped verify only samples named paths, so a green dupwrap_status{task="verify"}
+   means something weaker for those profiles than for the rest -- and nothing in the
+   existing series says which kind it was. This is emitted for every scheduled
+   profile, 0 included, because absent-versus-zero would otherwise be ambiguous with
+   metrics being broken. Config-time rather than run-time: an operator can see the
+   scope before the first verify ever fires, and it cannot disagree with the cron
+   job, having been rendered from the same variable. #}
+# HELP dupwrap_verify_scope_paths Count of explicit paths verification is scoped to; 0 means the profile's whole source tree
+# TYPE dupwrap_verify_scope_paths gauge
+{% for backup in dupwrap_backups %}
+{% set metrics_enabled = backup.metrics | default(dupwrap_metrics) | bool %}
+{% set cron_verify = backup.verify_cron | default(dupwrap_verify_cron) | bool %}
+{% set post_backup_verify = backup.verify_after_backup | default(dupwrap_verify_after_backup) | bool %}
+{% set verify_scope = backup.verify_include | default(dupwrap_verify_include) %}
+{% if backup.state | default("present") == "present" and metrics_enabled and (cron_verify or post_backup_verify) %}
+dupwrap_verify_scope_paths{backup_name={{ backup.name | to_json }}} {{ verify_scope | length }}
+{% endif %}
+{% endfor %}

@@ -66,6 +66,93 @@
             'dupwrap backup_verify -p verify-enabled -q'
             in (backup_verify_cron_content.content | b64decode)
 
+    - name: Read scoped verify cron file
+      ansible.builtin.slurp:
+        src: /etc/cron.d/dupwrap-verify-verify-scoped
+      register: verify_cron_scoped
+
+    - name: Read scoped backup cron file
+      ansible.builtin.slurp:
+        src: /etc/cron.d/dupwrap-backup-verify-scoped
+      register: backup_cron_scoped
+
+    # The scope lives in a file, so a scoped profile's cron line is identical
+    # to an unscoped one. That is the property that makes spaces and unicode
+    # safe -- no operator data enters the bash -c '...' wrapper at all -- and
+    # it is what keeps every existing fleet profile byte-identical.
+    - name: Verify no include path reaches any cron command line
+      ansible.builtin.assert:
+        that:
+          - >-
+            'dupwrap verify -p verify-scoped -q'
+            in (verify_cron_scoped.content | b64decode)
+          - >-
+            'dupwrap backup_verify -p verify-scoped -q'
+            in (backup_cron_scoped.content | b64decode)
+          - "'-i' not in (verify_cron_scoped.content | b64decode)"
+          - "'-i' not in (backup_cron_scoped.content | b64decode)"
+          - "'.pdf' not in (verify_cron_scoped.content | b64decode)"
+          - "'.pdf' not in (backup_cron_scoped.content | b64decode)"
+        fail_msg: >-
+          Include paths leaked into a cron command line.
+          verify={{ verify_cron_scoped.content | b64decode }}
+          backup={{ backup_cron_scoped.content | b64decode }}
+
+    - name: Read the scoped profile's include list
+      ansible.builtin.slurp:
+        src: /etc/dupwrap/verify-scoped.verify-include
+      register: verify_include_file
+
+    # Byte-for-byte, in order, and RELATIVE -- dupwrap reads each line and
+    # passes it to duplicity as --path-to-restore, which names an entry
+    # inside the archive. The first path carries two spaces and the third is
+    # non-ASCII and contains a quote, an ampersand and a $ -- all of which
+    # must survive templating untouched, with no quoting or escaping added,
+    # because dupwrap reads this file literally and hands each line over as a
+    # single argv element.
+    - name: Verify the include list is written verbatim, one path per line
+      ansible.builtin.assert:
+        that:
+          - >-
+            (verify_include_file.content | b64decode) ==
+            "fixtures/two  spaces.pdf\n"
+            ~ "fixtures/report & notes$.txt\n"
+            ~ "mnt/data/知らない/naïve ‑ quote'd & $PATH.pdf\n"
+        fail_msg: >-
+          Include list not written verbatim. Got:
+          {{ verify_include_file.content | b64decode | to_json }}
+
+    - name: Verify the profile config points dupwrap at that include list
+      ansible.builtin.slurp:
+        src: /etc/dupwrap/verify-scoped.conf
+      register: verify_scoped_conf
+
+    - name: Verify VERIFY_INCLUDE_FILE is set in the profile config
+      ansible.builtin.assert:
+        that:
+          - >-
+            'VERIFY_INCLUDE_FILE="/etc/dupwrap/verify-scoped.verify-include"'
+            in (verify_scoped_conf.content | b64decode)
+
+    # An unscoped profile must have NO list, because presence of the file is
+    # what enables scoping -- a stale one would silently narrow its verify.
+    - name: Check unscoped profiles have no include list
+      ansible.builtin.stat:
+        path: "/etc/dupwrap/{{ item }}.verify-include"
+      register: unscoped_include_files
+      loop:
+        - verify-enabled
+        - verify-disabled
+
+    - name: Verify unscoped profiles are left on full-tree verification
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+        fail_msg: "{{ item.item }} has an include list it never asked for"
+      loop: "{{ unscoped_include_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
     - name: Check disabled verify cron file
       ansible.builtin.stat:
         path: /etc/cron.d/dupwrap-verify-verify-disabled
@@ -128,6 +215,52 @@
           - restore_tasks.stat.exists
         fail_msg: "tasks/restore.yml not found in role"
         success_msg: "restore tasks file present"
+
+    # The refusal branch. An assert nobody has ever watched fire is an assert
+    # that might not fire, and with only the relative-path check left this is
+    # cheap to exercise. The role aborts on its second task, before touching
+    # any file, so re-entering it here mutates nothing.
+    #
+    # ⚠️ INVERTED 2026-10-03 along with the path semantics. This case used to
+    # feed the role a RELATIVE path and require a refusal, because the scope
+    # was passed as --include-filelist against an archive rooted at /. Under
+    # --path-to-restore a relative path is the only correct form, so the
+    # absolute one is what must now be refused -- and a suite still pinning
+    # the old direction would have kept passing while rejecting every valid
+    # configuration.
+    - name: Exercise the refusal of an absolute include path
+      block:
+        - name: Converge the role with an absolute verify_include
+          ansible.builtin.include_role:
+            name: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
+          vars:
+            dupwrap_backups:
+              - name: verify-absolute
+                destination: local
+                local_path: /tmp/dupwrap-verify-absolute
+                directories:
+                  - /tmp
+                passphrase: molecule-verify-absolute
+                verify_include:
+                  - "/fixtures/two  spaces.pdf"
+
+        - name: Fail because the role accepted an absolute path
+          ansible.builtin.fail:
+            msg: >-
+              The role accepted an absolute verify_include path.
+              --path-to-restore names a path inside the archive, so that
+              scope would have been aimed at the wrong entry.
+      rescue:
+        - name: Verify the refusal explains itself and names the path
+          ansible.builtin.assert:
+            that:
+              - "'must be relative' in _dupwrap_refusal"
+              - "'/fixtures/two  spaces.pdf' in _dupwrap_refusal"
+            fail_msg: >-
+              Provisioning refused, but not for the expected reason:
+              {{ _dupwrap_refusal }}
+          vars:
+            _dupwrap_refusal: "{{ ansible_failed_result.msg | default('') }}"
 
     - name: Display verification summary
       ansible.builtin.debug:
