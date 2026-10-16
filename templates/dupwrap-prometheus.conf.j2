@@ -1,0 +1,2 @@
+# {{ ansible_managed }}
+L+ {{ dupwrap_promtext_path | regex_replace('^/var/run/', '/run/') }}/dupwrap-verify-schedule.prom - - - - {{ dupwrap_metrics_state_path }}/dupwrap-verify-schedule.prom

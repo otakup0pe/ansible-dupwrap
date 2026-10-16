@@ -45,3 +45,4 @@ dupwrap_restore_profile: ""
 dupwrap_cron_verbose: false
 dupwrap_metrics: false
 dupwrap_promtext_path: "/var/run/promnode/textfiles"
+dupwrap_metrics_state_path: "/var/lib/dupwrap/metrics"

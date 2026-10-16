@@ -115,6 +115,66 @@
         fail_msg: "Directory {{ item.item }} is empty after auto-restore"
       loop: "{{ auto_restore_dirs.results }}"
 
+    - name: Inspect persistent verification metrics
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+        follow: false
+      loop:
+        - path: /var/lib/dupwrap/metrics/dupwrap-verify-schedule.prom
+          kind: canonical
+        - path: /tmp/dupwrap-promtext/dupwrap-verify-schedule.prom
+          kind: collector
+        - path: /etc/tmpfiles.d/dupwrap-prometheus.conf
+          kind: tmpfiles
+      register: dupwrap_verification_metric_paths
+
+    - name: Assert verification metrics survive runtime-directory loss
+      ansible.builtin.assert:
+        that:
+          - dupwrap_verification_metric_paths.results[0].stat.isreg | default(false)
+          - dupwrap_verification_metric_paths.results[1].stat.islnk | default(false)
+          - >-
+            dupwrap_verification_metric_paths.results[1].stat.lnk_source
+            | default('')
+            == '/var/lib/dupwrap/metrics/dupwrap-verify-schedule.prom'
+          - dupwrap_verification_metric_paths.results[2].stat.isreg | default(false)
+
+    - name: Simulate volatile collector reset
+      ansible.builtin.file:
+        path: /tmp/dupwrap-promtext
+        state: absent
+
+    - name: Recreate volatile collector directory
+      ansible.builtin.file:
+        path: /tmp/dupwrap-promtext
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Recreate verification metric collector link at boot
+      ansible.builtin.command:
+        argv:
+          - systemd-tmpfiles
+          - --create
+          - /etc/tmpfiles.d/dupwrap-prometheus.conf
+      changed_when: true
+
+    - name: Read verification metric after collector reset
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-verify-schedule.prom
+      register: dupwrap_persistent_verification_metric
+
+    - name: Assert verification policy remains observable
+      ansible.builtin.assert:
+        that:
+          - >-
+            (dupwrap_persistent_verification_metric.content | b64decode)
+            is regex('(?m)^dupwrap_verify_scheduled\\{backup_name="e2e-test"\\} 1$')
+          - >-
+            (dupwrap_persistent_verification_metric.content | b64decode)
+            is regex('(?m)^dupwrap_verify_scope_paths\\{backup_name="e2e-test"\\} 0$')
+
     - name: Display verification summary
       ansible.builtin.debug:
         msg: |

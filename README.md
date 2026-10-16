@@ -66,6 +66,8 @@ destination.
   than the specified number of months
 * `dupwrap_full_older` defaults to `30D` and determines how frequently
   to force full backups
+* `dupwrap_metrics_state_path` defaults to `/var/lib/dupwrap/metrics`
+  and holds configuration-derived metrics across reboots
 
 Multiple backup profiles may be defined. They are all stored in a a
 directory named `dupwrap` relative to the config prefix. The
@@ -109,7 +111,10 @@ weekday as an OR when both are restricted.
 
 When metrics are enabled, successful verification updates
 `dupwrap_status{task="verify"}` and `dupwrap_time{task="verify"}`.
-Failures use the distinct `task="verify_error"` series.
+Failures use the distinct `task="verify_error"` series. Verification-policy
+metrics are stored under `dupwrap_metrics_state_path` and linked into the
+node_exporter textfile directory. A tmpfiles rule recreates that link when the
+runtime collector directory is rebuilt at boot.
 
 ### Scoped verification
 

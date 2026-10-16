@@ -232,34 +232,71 @@
     {% else %}absent{% endif %}"
   loop: "{{ dupwrap_backups }}"
 
+- name: "Resolve metrics policy"
+  ansible.builtin.set_fact:
+    _dupwrap_metrics_enabled: >-
+      {{ (dupwrap_metrics | bool) or
+         (dupwrap_backups
+          | selectattr("metrics", "defined")
+          | selectattr("metrics")
+          | list
+          | length > 0) }}
+
+- name: "Assert verification policy metrics use persistent state"
+  ansible.builtin.assert:
+    that:
+      - not (dupwrap_metrics_state_path is match('^/etc(?:/|$)'))
+      - not (dupwrap_metrics_state_path is match('^/(?:var/)?run(?:/|$)'))
+    fail_msg: >-
+      dupwrap_metrics_state_path must be persistent application state,
+      not configuration or a runtime filesystem.
+    quiet: true
+  when: _dupwrap_metrics_enabled
+
+- name: "Create persistent metrics directory"
+  ansible.builtin.file:
+    path: "{{ dupwrap_metrics_state_path }}"
+    state: directory
+    owner: "{{ dupwrap_user }}"
+    group: "{{ dupwrap_group }}"
+    mode: "0750"
+  when: _dupwrap_metrics_enabled
+
 - name: "Publish scheduled verification metrics"
   ansible.builtin.template:
     src: "dupwrap-verify-schedule.prom.j2"
-    dest: "{{ dupwrap_promtext_path }}/dupwrap-verify-schedule.prom"
+    dest: "{{ dupwrap_metrics_state_path }}/dupwrap-verify-schedule.prom"
     owner: "{{ dupwrap_user }}"
     group: "{{ dupwrap_group }}"
     mode: "0640"
-  when: >-
-    (dupwrap_metrics | bool) or
-    (dupwrap_backups
-     | selectattr("metrics", "defined")
-     | selectattr("metrics")
-     | list
-     | length > 0)
+  when: _dupwrap_metrics_enabled
+
+- name: "Install verification metric boot link"
+  ansible.builtin.template:
+    src: "dupwrap-prometheus.conf.j2"
+    dest: "/etc/tmpfiles.d/dupwrap-prometheus.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  when: _dupwrap_metrics_enabled
+
+- name: "Link verification metrics into the collector"
+  ansible.builtin.file:
+    src: "{{ dupwrap_metrics_state_path }}/dupwrap-verify-schedule.prom"
+    dest: "{{ dupwrap_promtext_path }}/dupwrap-verify-schedule.prom"
+    state: link
+    force: true
+  when: _dupwrap_metrics_enabled
 
 - name: "Remove scheduled verification metrics when metrics are disabled"
   ansible.builtin.file:
-    path: "{{ dupwrap_promtext_path }}/dupwrap-verify-schedule.prom"
+    path: "{{ item }}"
     state: absent
-  when: >-
-    not (
-      (dupwrap_metrics | bool) or
-      (dupwrap_backups
-       | selectattr("metrics", "defined")
-       | selectattr("metrics")
-       | list
-       | length > 0)
-    )
+  loop:
+    - "{{ dupwrap_promtext_path }}/dupwrap-verify-schedule.prom"
+    - "{{ dupwrap_metrics_state_path }}/dupwrap-verify-schedule.prom"
+    - "/etc/tmpfiles.d/dupwrap-prometheus.conf"
+  when: not _dupwrap_metrics_enabled
 
 - name: "Install helper scripts"
   ansible.builtin.copy:
