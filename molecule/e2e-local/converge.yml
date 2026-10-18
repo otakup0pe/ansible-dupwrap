@@ -17,6 +17,7 @@
         verify_cron: false
         verify_after_backup: true
         metrics: true
+        pre_script: /tmp/dupwrap-test-precheck
     dupwrap_metrics: false
     dupwrap_promtext_path: /tmp/dupwrap-promtext
     dupwrap_log_group: dupwrap-log-readers
@@ -26,6 +27,16 @@
       ansible.builtin.group:
         name: dupwrap-log-readers
         system: true
+
+    - name: Install deterministic source-readiness precheck
+      ansible.builtin.copy:
+        dest: /tmp/dupwrap-test-precheck
+        content: |
+          #!/bin/sh
+          test ! -e /tmp/dupwrap-precheck-block
+        owner: root
+        group: root
+        mode: "0755"
 
   roles:
     - role: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') | basename }}"
@@ -1352,3 +1363,87 @@
         fail_msg: |
           verbose failure={{ _verbose_failure }}
           verbose log={{ _verbose_log.content | b64decode }}
+
+    # ---------------------------------------------------------------
+    # Step 14: Source preconditions block every source-reading action
+    # ---------------------------------------------------------------
+    - name: "precheck: read metrics before blocked actions"
+      ansible.builtin.slurp:
+        src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+      register: _precheck_metrics_before
+
+    - name: "precheck: exercise blocked actions"
+      block:
+        - name: "precheck: make the source readiness check fail"
+          ansible.builtin.file:
+            path: /tmp/dupwrap-precheck-block
+            state: touch
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: "precheck: run each source-reading action"
+          ansible.builtin.command:
+            argv:
+              - dupwrap
+              - "{{ item }}"
+              - -p
+              - e2e-test
+              - -q
+          environment:
+            PATH: "/tmp/dupwrap-test-bin:{{ ansible_env.PATH }}"
+          loop:
+            - backup
+            - backup_verify
+            - verify
+          register: _precheck_blocked
+          changed_when: false
+          failed_when: false
+
+        - name: "precheck: read metrics after blocked actions"
+          ansible.builtin.slurp:
+            src: /tmp/dupwrap-promtext/dupwrap-e2e-test.prom
+          register: _precheck_metrics_after
+
+        - name: "precheck: assert blocks are distinct from data failures"
+          ansible.builtin.assert:
+            that:
+              - _precheck_blocked.results | map(attribute='rc') | list == [75, 75, 75]
+              - >-
+                _precheck_blocked.results
+                | map(attribute='stderr')
+                | select('search', 'Blocked: .* pre-script failed')
+                | list
+                | length == 3
+              - >-
+                _precheck_blocked.results
+                | map(attribute='stderr')
+                | select('search', 'synthetic quiet stderr')
+                | list
+                | length == 0
+              - >-
+                (_precheck_metrics_after.content | b64decode)
+                is regex('(?m)^dupwrap_time\\{task="backup_blocked", backup_name="e2e-test"\\} [0-9]+$')
+              - >-
+                (_precheck_metrics_after.content | b64decode)
+                is regex('(?m)^dupwrap_time\\{task="backup_verify_blocked", backup_name="e2e-test"\\} [0-9]+$')
+              - >-
+                (_precheck_metrics_after.content | b64decode)
+                is regex('(?m)^dupwrap_time\\{task="verify_blocked", backup_name="e2e-test"\\} [0-9]+$')
+              - >-
+                ((_precheck_metrics_after.content | b64decode)
+                 | regex_findall('(?m)^dupwrap_time\\{task="verify_error".*$'))
+                ==
+                ((_precheck_metrics_before.content | b64decode)
+                 | regex_findall('(?m)^dupwrap_time\\{task="verify_error".*$'))
+              - >-
+                ((_precheck_metrics_after.content | b64decode)
+                 | regex_findall('(?m)^dupwrap_time\\{task="verify",.*$'))
+                ==
+                ((_precheck_metrics_before.content | b64decode)
+                 | regex_findall('(?m)^dupwrap_time\\{task="verify",.*$'))
+      always:
+        - name: "precheck: restore source readiness"
+          ansible.builtin.file:
+            path: /tmp/dupwrap-precheck-block
+            state: absent

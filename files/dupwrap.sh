@@ -49,6 +49,12 @@ function problems {
     exit 1
 }
 
+function blocked {
+    log "Blocked: ${1}"
+    cleanup
+    exit 75
+}
+
 function prom_write {
     [ "$#" == 3 ] || problems "prom_write invalid args"
     [ -z "$METRICS" ] && return
@@ -189,6 +195,24 @@ function prom_write_backup_stats {
             | tr '[:upper:]' '[:lower:]')"
         prom_write "$METRIC" "backup" "$VALUE"
     done
+}
+
+function run_pre_script {
+    local OPERATION="$1"
+    local START FINISH TIME RC=0
+
+    [ -n "$PRE_SCRIPT" ] || return 0
+    START="$(date '+%s')"
+    # PRE_SCRIPT may include arguments, such as dupwrap-swap-helper pre.
+    # shellcheck disable=SC2086
+    $PRE_SCRIPT || RC=$?
+    if [ "$RC" -ne 0 ] ; then
+        FINISH="$(date '+%s')"
+        TIME="$((FINISH - START))"
+        prom_write "status" "${OPERATION}_blocked" "$TIME"
+        prom_write "time" "${OPERATION}_blocked" "$FINISH"
+        blocked "${OPERATION} pre-script failed after ${TIME}s (rc=${RC})"
+    fi
 }
 
 function backup() {
@@ -636,15 +660,11 @@ fi
 
 
 if [ "$ACTION" = "backup" ]; then
-    if [ -n "$PRE_SCRIPT" ] ; then
-        $PRE_SCRIPT
-    fi
+    run_pre_script "backup"
     backup
     cleanup
 elif [ "$ACTION" = "backup_verify" ]; then
-    if [ -n "$PRE_SCRIPT" ] ; then
-        $PRE_SCRIPT
-    fi
+    run_pre_script "backup_verify"
     # -i narrows only the verify; backup always protects the full source tree.
     backup
     verify
@@ -653,6 +673,7 @@ elif [ "$ACTION" = "list" ]; then
     list
     cleanup
 elif [ "$ACTION" = "verify" ]; then
+    run_pre_script "verify"
     verify
     cleanup
 elif [ "$ACTION" = "restore" ] ; then

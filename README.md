@@ -242,11 +242,17 @@ sourced, exports propagate into the dupwrap process. The script must
 use `return 1` (not `exit 1`) on failure to avoid killing the parent
 process.
 
-## Swap Helper
+## Pre- and Post-Scripts
 
-The swap helper script (`dupwrap-swap-helper`) is meant to be used
-with the `pre_script` and `post_script` job variables. It is invoked
-with a single argument which is either `pre` or `post`.
+`pre_script` runs before `backup`, `backup_verify`, and `verify`.
+A non-zero result blocks duplicity, exits with status 75, and publishes
+an action-specific `task="<action>_blocked"` metric when metrics are
+enabled. This keeps an unavailable source distinct from a backup or
+archive-verification failure.
+
+The swap helper (`dupwrap-swap-helper`) can be configured as
+`dupwrap-swap-helper pre` and `dupwrap-swap-helper post` through the
+`pre_script` and `post_script` variables.
 
 ## Testing
 
