@@ -163,6 +163,24 @@
         that:
           - not verify_cron_disabled.stat.exists
 
+    - name: Check absent profile cron files
+      ansible.builtin.stat:
+        path: "/etc/cron.d/dupwrap-{{ item }}-absent"
+      register: absent_profile_crons
+      loop:
+        - backup
+        - prune
+        - verify
+
+    - name: Verify absent profiles have no scheduled jobs
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+        fail_msg: "Absent profile still scheduled by {{ item.item }}"
+      loop: "{{ absent_profile_crons.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
     - name: Check uv is available
       ansible.builtin.command: uv --version
       register: uv_check

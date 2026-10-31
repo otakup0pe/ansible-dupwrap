@@ -25,6 +25,15 @@
         passphrase: molecule-verify-disabled
         cron: false
         verify_cron: false
+      - name: absent
+        state: absent
+        destination: local
+        local_path: /tmp/dupwrap-absent
+        directories:
+          - /tmp
+        passphrase: molecule-absent
+        cron: true
+        verify_cron: true
       # Synthetic awkward paths exercise spaces, unicode, quotes, and shell
       # metacharacters. They stay relative because --path-to-restore addresses
       # entries inside the archive.

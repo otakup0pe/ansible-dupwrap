@@ -167,8 +167,11 @@
     hour: "{{ omit if dupwrap_backup_jitter | int == 0 else '0' }}"
     job: "bash -c '{{ dupwrap_bin_prefix }}/dupwrap {{ dupwrap_backup_action }} -p {{ item.name }} {{ dupwrap_cron_flags }}'"
     user: "{{ dupwrap_user }}"
-    state: "{% if item.cron | default(dupwrap_cron) %}present\
-    {% else %}absent{% endif %}"
+    state: >-
+      {{ 'present'
+         if (item.state | default('present')) != 'absent'
+            and (item.cron | default(dupwrap_cron) | bool)
+         else 'absent' }}
   vars:
     dupwrap_backup_action: "{{ 'backup_verify' if (item.verify_after_backup | default(dupwrap_verify_after_backup) | bool) else 'backup' }}"
     dupwrap_cron_flags: "{{ '-v &>> ' ~ dupwrap_log_prefix ~ '/dupwrap.log' if dupwrap_cron_verbose else '-q' }}"
@@ -193,8 +196,11 @@
       {% else %}
       -q{%- endif -%}'
     user: "{{ dupwrap_user }}"
-    state: "{% if item.cron | default(dupwrap_cron) %}present\
-    {% else %}absent{% endif %}"
+    state: >-
+      {{ 'present'
+         if (item.state | default('present')) != 'absent'
+            and (item.cron | default(dupwrap_cron) | bool)
+         else 'absent' }}
   vars:
     dupwrap_prune_jitter: "{{ item.prune_jitter_minutes | default(dupwrap_prune_jitter_minutes) }}"
     # The seed carries a '-prune' suffix where the backup task uses
@@ -228,8 +234,11 @@
       {{ "-v &>> " ~ dupwrap_log_prefix ~ "/dupwrap.log"
          if dupwrap_cron_verbose else "-q" }}'
     user: "{{ dupwrap_user }}"
-    state: "{% if item.verify_cron | default(dupwrap_verify_cron) %}present\
-    {% else %}absent{% endif %}"
+    state: >-
+      {{ 'present'
+         if (item.state | default('present')) != 'absent'
+            and (item.verify_cron | default(dupwrap_verify_cron) | bool)
+         else 'absent' }}
   loop: "{{ dupwrap_backups }}"
 
 - name: "Resolve metrics policy"
